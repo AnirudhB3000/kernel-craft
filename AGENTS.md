@@ -13,6 +13,69 @@ This document defines the goals, scope, and execution plan for developing deep e
 - Design decisions, whether high‑level architecture or low‑level implementation choices, must be documented in this CLAUDE.md file.
 - Updates to logic that affect interfaces or behavior require an entry in CLAUDE.md describing the change.
 - The naive convolution implementation (`src/conv_naive.cu`) is verified by `tests/test_conv_naive.cpp`.
+- The tiled convolution implementation (`src/conv_tiled.cu`) is verified by `tests/test_conv_tiled.cpp`.
+
+### Documentation Style
+
+All source files must use Doxygen-style inline documentation:
+
+- Use `\file` for file-level documentation
+- Use `\brief` for function summaries
+- Use `\param[in]` / `\param[out]` for parameters
+- Use `\par` for paragraph sections
+- Use `\code` / `\endcode` for code examples
+
+Example:
+```c
+/**
+ * \file example.cu
+ * \brief Brief description.
+ *
+ * \par Detailed description
+ * More details here.
+ *
+ * \param[in] input Input description.
+ * \param[out] output Output description.
+ */
+```
+
+---
+
+## Design Decisions & Results
+
+### Tiled vs Naive Convolution Benchmark Results (3×3 kernel)
+
+| Image Size | Naive GPU (ms) | Tiled 8×8 (ms) | Tiled 16×16 (ms) | Tiled 32×32 (ms) | Best Tile |
+|-----------|----------------|----------------|------------------|------------------|-----------|
+| 256×256   | ~0.45          | 0.36           | 0.73             | 0.36             | 8×8 / 32×32 |
+| 1024×1024 | ~0.70          | 0.60           | 0.60             | 0.95             | 8×8 / 16×16 |
+| 2048×2048 | ~1.40          | 1.34           | 1.64             | 1.39             | 8×8 / 32×32 |
+
+### Fused vs Separate Pipeline Results (1024×1024 image)
+
+| Pipeline | Kernel Launches | Time (ms) | Speedup |
+|----------|----------------|-----------|---------|
+| Fused    | 1              | ~0.42     | ~2.3x   |
+| Separate | 3              | ~0.96     | baseline|
+
+**Key Insight**: Memory movement dominates; fused saves ~40% global memory traffic.
+
+### Tile Size Analysis
+
+| Tile Size | Shared Memory | Best For |
+|-----------|---------------|----------|
+| 8×8       | 10×10 = 100 floats | All sizes, consistently fast |
+| 16×16    | 18×18 = 324 floats | Medium images (1024×1024) |
+| 32×32    | 34×34 = 1156 floats | Large images, but overkill for small |
+
+**Key Observations:**
+- **8×8 tile**: Most consistent performer across all image sizes
+- **16×16 tile**: Good balance, slight overhead at small sizes
+- **32×32 tile**: Best for large images but overhead hurts small/medium
+
+**Conclusion**: 8×8 tile provides the best overall performance for this 3×3 kernel workload.
+
+---
 
 # 1. Core Objectives
 
@@ -358,6 +421,92 @@ Focus is on:
 * Prioritize clarity over premature optimization
 * Always validate correctness before optimizing
 * Profile before making assumptions
+
+---
+
+# 9. Python Extension (numpy / PyTorch)
+
+## 9.1 Motivation
+
+Enable real-world use cases by exposing CUDA kernels to Python ML workflows.
+
+## 9.2 Goals
+
+1. Add pybind11 via CMake FetchContent (auto-download, no pip install)
+2. Expose `conv_naive` and `conv_tiled` to Python
+3. Support numpy array input/output
+4. Support PyTorch tensor input/output on GPU
+5. Expose `tile_w` and `tile_h` as runtime parameters
+
+## 9.3 API Design
+
+```python
+import kernel_craft
+
+# numpy arrays
+out = kernel_craft.conv_naive(input, kernel)      # -> np.ndarray
+out = kernel_craft.conv_tiled(input, kernel, tile_w=8, tile_h=8)  # -> np.ndarray
+
+# PyTorch tensors (CUDA)
+out = kernel_craft.conv_naive(tensor, kernel)    # -> torch.Tensor on GPU
+out = kernel_craft.conv_tiled(tensor, kernel, tile_w=16, tile_h=16)  # -> torch.Tensor on GPU
+```
+
+## 9.4 Implementation Tasks
+
+### Task 1: Update CMakeLists.txt
+
+Add pybind11 FetchContent and Python extension target:
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(pybind11 GIT_REPOSITORY https://github.com/pybind/pybind11.git GIT_TAG v2.11.1)
+FetchContent_MakeAvailable(pybind11)
+pybind11_add_module(kernel_craft src/pybind_cuda.cpp src/conv_naive.cu src/conv_tiled.cu)
+```
+
+### Task 2: Create src/pybind_cuda.cpp
+
+Bind functions:
+
+- `conv_naive(input: np.ndarray, kernel: np.ndarray) -> np.ndarray`
+- `conv_tiled(input: np.ndarray, kernel: np.ndarray, tile_w: int, tile_h: int) -> np.ndarray`
+- `conv_naive(input: Tensor, kernel: Tensor) -> Tensor`  (PyTorch overload)
+- `conv_tiled(input: Tensor, kernel: Tensor, tile_w: int, tile_h: int) -> Tensor`  (PyTorch overload)
+
+Handle memory transfer:
+
+- numpy: copy host->device, run kernel, copy device->host, return numpy array
+- torch: extract data pointer, run kernel, wrap result in new tensor on GPU
+
+### Task 3: Support tile_w/tile_h runtime params
+
+The tiled kernel requires compile-time tile size for shared memory. Two approaches:
+
+1. Compile multiple kernel variants (8x8, 16x16, 32x32) and dispatch at runtime
+2. Use runtime tile size with dynamic shared memory allocation
+
+## 9.5 Deliverables
+
+* `src/pybind_cuda.cpp` - pybind11 module (~200 lines)
+* CMakeLists.txt updated with Python extension target
+* `python/README.md` - user-facing documentation
+
+## 9.6 Build & Test
+
+```bash
+mkdir build && cd build
+cmake ..
+make
+python3 -c "import kernel_craft; print(kernel_craft.conv_naive(...))"
+```
+
+## 9.7 Verification
+
+- [ ] Module imports without error
+- [ ] numpy arrays produce correct output (match CPU reference)
+- [ ] PyTorch tensors produce correct output on GPU
+- [ ] `tile_w`/`tile_h` parameters affect performance
 
 ---
 

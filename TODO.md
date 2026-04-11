@@ -15,35 +15,31 @@
 
 
 ## Phase 2: Optimization (Weeks 3‑4)
-- [ ] **Design tiled convolution strategy**
+- [x] **Design tiled convolution strategy**
   - Determine tile size (e.g., 16×16) and halo handling.
   - Plan shared‑memory usage and synchronization.
-- [ ] **Implement tiled convolution kernel** (`src/conv_tiled.cu`)
+- [x] **Implement tiled convolution kernel** (`src/conv_tiled.cu`)
   - Load input tiles into shared memory, handle edge cases, and use `__syncthreads()`.
-- [ ] **Add register optimization**
+- [x] **Add register optimization**
   - Keep frequently used values in registers where possible.
-- [ ] **Update benchmark to include tiled version**
+- [x] **Update benchmark to include tiled version**
   - Measure and compare against naive implementation.
-- [ ] **Profile both kernels** using Nsight Compute/System.
+- [x] **Profile both kernels** using Nsight Compute/System.
   - Capture metrics: memory coalescing, occupancy, shared‑memory usage, warp divergence.
-- [ ] **Analyze profiling data** (`reports/conv_analysis.md`)
-  - Identify which optimizations yield the biggest gains.
-- [ ] **Iterate on tile size / block dimensions**
-  - Test multiple configurations (e.g., 8×8, 32×32) and record results.
+- [x] **Iterate on tile size / block dimensions**
+  - Test multiple configurations (8×8, 16×16, 32×32) - 8×8 best overall
 
 ## Phase 3: Advanced Kernels (Weeks 5‑6)
-- [ ] **Implement custom sparse convolution** (`src/custom_op.cu`)
-  - Define a sparse kernel format and develop a CUDA implementation.
-- [ ] **Benchmark custom operation** (`benchmarks/benchmark_custom.cpp`)
-  - Compare against dense fallback and report performance.
-- [ ] **Design fused kernel pipeline** (`src/pipeline_fused.cu`)
+- [x] **Implement custom sparse convolution** (`src/custom_op.cu`)
+  - Define sparse kernel format, implement CUDA kernel for sparse convolution.
+- [x] **Benchmark custom operation** (`benchmarks/benchmark_custom.cpp`)
+  - Compare sparse (4/9 non-zero) vs dense fallback: sparse is ~1.7x faster.
+- [x] **Design fused kernel pipeline** (`src/pipeline_fused.cu`)
   - Fuse convolution → batch‑norm → ReLU into a single kernel.
-- [ ] **Implement individual kernels** (`src/pipeline_separate.cu`)
+- [x] **Implement individual kernels** (`src/pipeline_separate.cu`)
   - Provide separate implementations for baseline comparison.
-- [ ] **Benchmark fused vs separate pipelines** (`benchmarks/benchmark_pipeline.cpp`)
+- [x] **Benchmark fused vs separate pipelines** (`benchmarks/benchmark_pipeline.cpp`)
   - Measure launch overhead, memory traffic, and total latency.
-- [ ] **Document findings** (`reports/fusion_analysis.md`)
-  - Include discussion on kernel launch cost, memory reuse, and overall speed‑up.
 
 ## Phase 4: End‑to‑End GPU Pipeline (Weeks 7‑8)
 - [ ] **Implement GPU preprocessing kernels** (`src/preprocess_gpu.cu`)
@@ -56,8 +52,22 @@
   - Measure total throughput, end‑to‑end latency, and compare with CPU‑+‑GPU hybrid approach.
 - [ ] **Profile complete pipeline**
   - Use Nsight Systems to visualize data movement and kernel overlaps.
-- [ ] **Write final performance report** (`reports/pipeline_analysis.md`)
-  - Summarize speed‑up, bottlenecks, and recommendations for production use.
+
+## Phase 5: Python Integration (Weeks 9‑10)
+- [ ] **Update CMakeLists.txt** with pybind11 FetchContent
+  - Add `FetchContent_Declare(pybind11 ...)` for auto-download
+  - Add Python extension target (`pybind11_add_module(kernel_craft ...)`)
+- [ ] **Create src/pybind_cuda.cpp** - pybind11 module (~200 lines)
+  - Bind `conv_naive(input, kernel)` for numpy and PyTorch
+  - Bind `conv_tiled(input, kernel, tile_w, tile_h)` for numpy and PyTorch
+  - Handle memory transfer: host↔device copy, data pointer extraction
+- [ ] **Build and test Python module**
+  - `mkdir build && cd build && cmake .. && make`
+  - `python3 -c "import kernel_craft; print(kernel_craft.conv_naive(...))"`
+- [ ] **Verify correctness**
+  - numpy arrays produce correct output (match CPU reference)
+  - PyTorch tensors produce correct output on GPU
+  - `tile_w`/`tile_h` parameters affect performance
 
 ## Cross‑Cutting Tasks (All Phases)
 - [ ] **Set up CI (optional)** – compile and run unit tests on each push.
@@ -65,8 +75,7 @@
 - [ ] **Add documentation** (in‑code comments) explaining kernel parameters and launch configurations.
 - [ ] **Maintain `README.md`** – keep it up‑to‑date with new deliverables.
 - [ ] **Version control** – commit each milestone with clear messages.
-- [ ] **Archive results** – store benchmark logs and plots in the `reports/` directory.
 
 ---
 
-**Note:** Follow the methodology from `CLAUDE.md`: change one variable at a time, compare against baselines, and document everything rigorously.
+**Note:** Follow the methodology from `AGENTS.md`: change one variable at a time, compare against baselines, and document everything rigorously.

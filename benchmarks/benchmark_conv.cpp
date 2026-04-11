@@ -1,6 +1,6 @@
 /**
- * @file benchmark_conv.cpp
- * @brief Benchmark for the naïve 2‑D convolution kernel.
+ * \file benchmark_conv.cpp
+ * \brief Benchmark for the naïve 2‑D convolution kernel.
  *
  * This program generates a synthetic input image and a simple averaging
  * kernel, runs the convolution on both the CPU (reference implementation)
@@ -14,20 +14,21 @@
 #include <chrono>
 #include <cuda_runtime.h>
 #include <algorithm>
+#include <string>
 
 // Host‑side reference implementation (identical to the one used in the unit test)
 /**
- * @brief CPU reference implementation of naïve 2‑D convolution.
+ * \brief CPU reference implementation of naïve 2‑D convolution.
  *
  * This function mirrors the algorithm used in the CUDA kernel but runs
  * on the host for verification and benchmarking purposes.
  *
- * @param[in]  input   Pointer to the input image (row‑major).
- * @param[in]  kernel  Pointer to the convolution kernel (row‑major).
- * @param[out] output  Destination buffer for the convolution result.
- * @param[in]  width   Image width.
- * @param[in]  height  Image height.
- * @param[in]  ksize   Kernel dimension (must be odd).
+ * \param[in] input  Pointer to the input image (row‑major).
+ * \param[in] kernel Pointer to the convolution kernel (row‑major).
+ * \param[out] output Destination buffer for the convolution result.
+ * \param[in] width  Image width.
+ * \param[in] height Image height.
+ * \param[in] ksize Kernel dimension (must be odd).
  */
 void conv_naive_cpu(const float* input, const float* kernel, float* output,
                     int width, int height, int ksize) {
@@ -58,7 +59,38 @@ extern "C" void launch_conv_naive(const float* d_input,
                                  int width, int height, int ksize,
                                  dim3 block = dim3(16,16,1));
 
+// Declaration of the host launcher defined in conv_tiled.cu
+extern "C" void launch_conv_tiled(const float* d_input,
+                                  const float* d_kernel,
+                                  float* d_output,
+                                  int width, int height, int ksize,
+                                  dim3 block = dim3(16,16,1));
+
+/**
+ * \brief Benchmark driver for convolution kernels.
+ *
+ * This program generates a synthetic input image and a simple averaging
+ * kernel, runs either the naïve or tiled convolution kernel (selected
+ * via the `--tiled` command‑line flag), verifies the result against a
+ * CPU reference implementation, and reports timing and throughput.
+ *
+ * \param argc Argument count.
+ * \param argv Argument vector; optional `--tiled` enables the tiled kernel.
+ * \return EXIT_SUCCESS if verification passes, EXIT_FAILURE otherwise.
+ */
 int main(int argc, char** argv) {
+    bool use_tiled = false;
+    // Simple flag parsing: look for "--tiled"
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--tiled") {
+            use_tiled = true;
+            // Remove the flag from argument list for later parsing (if any)
+            for (int j = i; j < argc - 1; ++j) argv[j] = argv[j+1];
+            --argc;
+            break;
+        }
+    }
+
     // Default dimensions – can be overridden via command line if desired
     const int width  = (argc > 1) ? std::atoi(argv[1]) : 1024;
     const int height = (argc > 2) ? std::atoi(argv[2]) : 1024;
@@ -79,7 +111,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < kerSize; ++i) h_kernel[i] = 1.0f / kerSize;
 
     // ------------------------------------------------
-    // GPU benchmark
+    // GPU benchmark (timed using CUDA events)
     // ------------------------------------------------
     float *d_input, *d_kernel, *d_output;
     cudaMalloc(&d_input,  sizeof(float) * imgSize);
@@ -94,7 +126,11 @@ int main(int argc, char** argv) {
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    launch_conv_naive(d_input, d_kernel, d_output, width, height, ksize);
+    if (use_tiled) {
+        launch_conv_tiled(d_input, d_kernel, d_output, width, height, ksize);
+    } else {
+        launch_conv_naive(d_input, d_kernel, d_output, width, height, ksize);
+    }
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     float gpu_ms = 0.0f;

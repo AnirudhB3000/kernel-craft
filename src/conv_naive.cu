@@ -15,12 +15,12 @@
  * Each thread computes one output pixel using direct global‑memory reads.
  * Zero‑padding is applied for out‑of‑bounds coordinates.
  *
- * @param input   Pointer to the input image (row‑major, size = width×height).
- * @param kernel  Pointer to the convolution kernel (row‑major, size = ksize×ksize).
- * @param output  Pointer to the output image buffer (same size as input).
- * @param width   Width of the input and output images.
- * @param height  Height of the input and output images.
- * @param ksize   Width and height of the square kernel (must be odd).
+ * \param[in] input  Pointer to the input image (row‑major, size = width×height).
+ * \param[in] kernel Pointer to the convolution kernel (row‑major, size = ksize×ksize).
+ * \param[out] output Pointer to the output image buffer (same size as input).
+ * \param[in] width  Width of the input and output images.
+ * \param[in] height Height of the input and output images.
+ * \param[in] ksize Width and height of the square kernel (must be odd).
  */
 extern "C" __global__ void conv_naive(const float* __restrict__ input,
                                      const float* __restrict__ kernel,
@@ -52,19 +52,19 @@ extern "C" __global__ void conv_naive(const float* __restrict__ input,
 }
 
 /**
- * \brief Host‑side convenience launcher for the naïve convolution kernel.
+ * \brief Host‑side launcher for the naïve convolution kernel.
  *
- * This function configures a 2‑D grid based on the image dimensions and
- * launches the \c conv_naive kernel. It synchronises the device before
+ * Configures a 2‑D grid based on the image dimensions and
+ * launches the \p conv_naive kernel. Synchronises the device before
  * returning.
  *
- * @param input   Device pointer to the input image.
- * @param kernel  Device pointer to the convolution kernel.
- * @param output  Device pointer to the output buffer.
- * @param width   Image width.
- * @param height  Image height.
- * @param ksize   Kernel size (must be odd).
- * @param block   Block dimensions (default 16×16 threads).
+ * \param[in] input  Device pointer to the input image.
+ * \param[in] kernel Device pointer to the convolution kernel.
+ * \param[out] output Device pointer to the output buffer.
+ * \param[in] width  Image width.
+ * \param[in] height Image height.
+ * \param[in] ksize Kernel size (must be odd).
+ * \param[in] block Block dimensions (default 16×16 threads).
  */
 extern "C" void launch_conv_naive(const float* input,
                                  const float* kernel,

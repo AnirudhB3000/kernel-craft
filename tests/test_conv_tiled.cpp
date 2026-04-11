@@ -1,10 +1,6 @@
 /**
- * \file test_conv_naive.cpp
- * \brief Unit test for the naïve 2‑D convolution kernel.
- *
- * The test allocates deterministic input and kernel data, copies it to the
- * device, launches \p launch_conv_naive, copies the result back, and compares it
- * against the CPU reference implementation using a small relative tolerance.
+ * \file test_conv_tiled.cpp
+ * \brief Unit test for the shared‑memory tiled convolution kernel.
  */
 #include <cstdio>
 #include <cstdlib>
@@ -12,18 +8,20 @@
 #include <cassert>
 #include <cuda_runtime.h>
 
-// Declaration of the host launcher defined in conv_naive.cu
-extern "C" void launch_conv_naive(const float* d_input, const float* d_kernel, float* d_output,
+// Declaration of the host launcher defined in conv_tiled.cu
+extern "C" void launch_conv_tiled(const float* d_input,
+                                 const float* d_kernel,
+                                 float* d_output,
                                  int width, int height, int ksize,
-                                 dim3 block = dim3(16,16,1));
+                                 dim3 block = dim3(16, 16, 1));
 
-// Simple CPU reference implementation for verification
+// CPU reference implementation (same as naive, double accumulator)
 void conv_naive_cpu(const float* input, const float* kernel, float* output,
                     int width, int height, int ksize) {
     int kHalf = ksize / 2;
     for (int oy = 0; oy < height; ++oy) {
         for (int ox = 0; ox < width; ++ox) {
-            float sum = 0.0f;
+            double sum = 0.0;
             for (int ky = 0; ky < ksize; ++ky) {
                 int iy = oy + ky - kHalf;
                 if (iy < 0 || iy >= height) continue;
@@ -32,14 +30,23 @@ void conv_naive_cpu(const float* input, const float* kernel, float* output,
                     if (ix < 0 || ix >= width) continue;
                     float val = input[iy * width + ix];
                     float kval = kernel[ky * ksize + kx];
-                    sum += val * kval;
+                    sum += static_cast<double>(val) * static_cast<double>(kval);
                 }
             }
-            output[oy * width + ox] = sum;
+            output[oy * width + ox] = static_cast<float>(sum);
         }
     }
 }
 
+/**
+ * \brief Entry point for the tiled convolution unit test.
+ *
+ * Allocates host and device buffers, launches the tiled kernel via
+ * \p launch_conv_tiled, copies the result back, and verifies it against the
+ * CPU reference implementation using a relative tolerance.
+ *
+ * \return EXIT_SUCCESS if all values match within tolerance, EXIT_FAILURE otherwise.
+ */
 int main() {
     const int width = 5, height = 5, ksize = 3;
     const int imgSize = width * height;
@@ -51,41 +58,40 @@ int main() {
     float *h_output_gpu = (float*)malloc(sizeof(float) * imgSize);
     float *h_output_cpu = (float*)malloc(sizeof(float) * imgSize);
 
-    // Initialize input with incremental values
+    // Initialise deterministic data
     for (int i = 0; i < imgSize; ++i) h_input[i] = static_cast<float>(i + 1);
-    // Simple averaging kernel
     for (int i = 0; i < kerSize; ++i) h_kernel[i] = 1.0f / kerSize;
 
-    // Allocate device memory
+    // Device allocation
     float *d_input, *d_kernel, *d_output;
     cudaMalloc(&d_input, sizeof(float) * imgSize);
     cudaMalloc(&d_kernel, sizeof(float) * kerSize);
     cudaMalloc(&d_output, sizeof(float) * imgSize);
 
-    // Copy inputs to device
     cudaMemcpy(d_input, h_input, sizeof(float) * imgSize, cudaMemcpyHostToDevice);
     cudaMemcpy(d_kernel, h_kernel, sizeof(float) * kerSize, cudaMemcpyHostToDevice);
 
-    // Launch kernel
-    launch_conv_naive(d_input, d_kernel, d_output, width, height, ksize);
+    // Launch tiled kernel (default block size)
+    launch_conv_tiled(d_input, d_kernel, d_output, width, height, ksize);
 
-    // Copy result back to host
     cudaMemcpy(h_output_gpu, d_output, sizeof(float) * imgSize, cudaMemcpyDeviceToHost);
 
-    // Run CPU reference for verification
+    // CPU reference
     conv_naive_cpu(h_input, h_kernel, h_output_cpu, width, height, ksize);
 
-    // Verify results (allow small epsilon due to floating point)
+    // Verify with relative tolerance
     const float eps = 1e-5f;
     for (int i = 0; i < imgSize; ++i) {
-        if (std::abs(h_output_gpu[i] - h_output_cpu[i]) > eps) {
-            fprintf(stderr, "Mismatch at index %d: GPU=%f CPU=%f\n", i, h_output_gpu[i], h_output_cpu[i]);
+        float diff = std::abs(h_output_gpu[i] - h_output_cpu[i]);
+        float maxv = std::max(std::abs(h_output_gpu[i]), std::abs(h_output_cpu[i]));
+        if (diff > eps * maxv) {
+            fprintf(stderr, "Mismatch at %d: GPU=%f CPU=%f\n", i, h_output_gpu[i], h_output_cpu[i]);
             return EXIT_FAILURE;
         }
     }
-    printf("All values match. Naive convolution test passed.\n");
 
-    // Cleanup
+    printf("Tiled convolution test passed.\n");
+
     cudaFree(d_input);
     cudaFree(d_kernel);
     cudaFree(d_output);
