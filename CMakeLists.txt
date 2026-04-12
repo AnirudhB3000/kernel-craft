@@ -48,6 +48,18 @@ target_link_libraries(test_conv_naive PRIVATE CUDA::cudart)
 add_executable(test_conv_tiled tests/test_conv_tiled.cpp src/conv_tiled.cu)
 target_link_libraries(test_conv_tiled PRIVATE CUDA::cudart)
 
+# Test executable for preprocessing kernels
+add_executable(test_preprocess tests/test_preprocess.cpp src/preprocess_gpu.cu)
+target_link_libraries(test_preprocess PRIVATE CUDA::cudart)
+
+# Test executable for pipeline kernels
+add_executable(test_pipeline tests/test_pipeline.cpp src/pipeline_separate.cu src/pipeline_fused.cu)
+target_link_libraries(test_pipeline PRIVATE CUDA::cudart)
+
+# Test executable for custom operations
+add_executable(test_custom_op tests/test_custom_op.cpp src/custom_op.cu)
+target_link_libraries(test_custom_op PRIVATE CUDA::cudart)
+
 # Benchmark executable for convolution
 add_executable(benchmark_conv benchmarks/benchmark_conv.cpp src/conv_naive.cu src/conv_tiled.cu)
 target_link_libraries(benchmark_conv PRIVATE CUDA::cudart)
@@ -60,6 +72,10 @@ target_link_libraries(benchmark_custom PRIVATE CUDA::cudart)
 add_executable(benchmark_pipeline benchmarks/benchmark_pipeline.cpp src/pipeline_separate.cu src/pipeline_fused.cu)
 target_link_libraries(benchmark_pipeline PRIVATE CUDA::cudart)
 
+# Benchmark executable for full GPU pipeline
+add_executable(benchmark_full_pipeline benchmarks/benchmark_full_pipeline.cpp src/preprocess_gpu.cu src/conv_tiled.cu)
+target_link_libraries(benchmark_full_pipeline PRIVATE CUDA::cudart)
+
 # Enable CTest BEFORE registering tests
 include(CTest)
 enable_testing()
@@ -67,20 +83,26 @@ enable_testing()
 # Register tests with CTest
 add_test(NAME conv_naive_test COMMAND test_conv_naive)
 add_test(NAME conv_tiled_test COMMAND test_conv_tiled)
+add_test(NAME preprocess_test COMMAND test_preprocess)
+add_test(NAME pipeline_test COMMAND test_pipeline)
+add_test(NAME custom_op_test COMMAND test_custom_op)
+
+# Register all benchmarks as tests
+add_test(NAME benchmark_conv COMMAND benchmark_conv)
+add_test(NAME benchmark_custom COMMAND benchmark_custom)
+add_test(NAME benchmark_pipeline COMMAND benchmark_pipeline)
+add_test(NAME benchmark_full_pipeline COMMAND benchmark_full_pipeline)
 
 # Convenience target that runs all registered tests and shows a concise summary
 add_custom_target(run_tests
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-    DEPENDS test_conv_naive test_conv_tiled
+    DEPENDS test_conv_naive test_conv_tiled test_preprocess test_pipeline test_custom_op
     COMMENT "Running all unit tests via CTest"
 )
 
-# Register benchmark as a test for CTest integration
-add_test(NAME benchmark_conv COMMAND benchmark_conv)
-
 # Convenience target to run only benchmarks via CTest (provides summary)
 add_custom_target(run_benchmarks
-    COMMAND ${CMAKE_CTEST_COMMAND} -R benchmark_conv --output-on-failure
-    DEPENDS benchmark_conv
+    COMMAND ${CMAKE_CTEST_COMMAND} -R benchmark_ --output-on-failure
+    DEPENDS benchmark_conv benchmark_custom benchmark_pipeline benchmark_full_pipeline
     COMMENT "Running all benchmarks via CTest"
 )

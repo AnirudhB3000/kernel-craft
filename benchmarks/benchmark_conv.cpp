@@ -15,6 +15,11 @@
 #include <cuda_runtime.h>
 #include <algorithm>
 #include <string>
+#include <sys/stat.h>
+
+void ensure_reports_dir() {
+    mkdir("/home/aniru/kernel-craft/reports", 0755);
+}
 
 // Host‑side reference implementation (identical to the one used in the unit test)
 /**
@@ -180,6 +185,19 @@ int main(int argc, char** argv) {
     printf("GPU time: %.3f ms (%.3f MPixels/s)\n", gpu_ms, gpu_throughput);
     printf("CPU time: %.3f ms (%.3f MPixels/s)\n", cpu_ms.count(), cpu_throughput);
     printf("Speed‑up: %.2fx\n", speedup);
+
+    // Write results to reports folder
+    ensure_reports_dir();
+    FILE* f = fopen("/home/aniru/kernel-craft/reports/benchmark_conv.txt", "w");
+    if (f) {
+        fprintf(f, "=== Convolution Benchmark ===\n");
+        fprintf(f, "Image size: %dx%d (%.2f MPixels)\n", width, height, num_pixels/1e6);
+        fprintf(f, "Kernel size: %dx%d\n", ksize, ksize);
+        fprintf(f, "GPU time: %.3f ms (%.3f MPixels/s)\n", gpu_ms, gpu_throughput);
+        fprintf(f, "CPU time: %.3f ms (%.3f MPixels/s)\n", cpu_ms.count(), cpu_throughput);
+        fprintf(f, "Speed-up: %.2fx\n", speedup);
+        fclose(f);
+    }
 
     // Cleanup
     cudaFree(d_input);

@@ -14,6 +14,11 @@
 #include <chrono>
 #include <cuda_runtime.h>
 #include <algorithm>
+#include <sys/stat.h>
+
+void ensure_reports_dir() {
+    mkdir("/home/aniru/kernel-craft/reports", 0755);
+}
 
 extern "C" void launch_conv_layer(const float* d_input, const float* d_kernel,
                                  float* d_output,
@@ -159,6 +164,24 @@ int main(int argc, char** argv) {
     printf("Fused speedup vs separate: %.2fx\n", speedup);
     printf("Fused verification: %s\n", fused_match ? "PASSED" : "FAILED");
     printf("Separate verification: %s\n", separate_match ? "PASSED" : "FAILED");
+
+    ensure_reports_dir();
+    FILE* f = fopen("/home/aniru/kernel-craft/reports/benchmark_pipeline.txt", "w");
+    if (f) {
+        fprintf(f, "=== Pipeline Benchmark ===\n");
+        fprintf(f, "Image size: %dx%d (%.2f MPixels)\n", width, height, num_pixels/1e6);
+        fprintf(f, "Kernel size: %dx%d\n", ksize, ksize);
+        fprintf(f, "Batchnorm: gamma=%.2f beta=%.2f\n", gamma, beta);
+        fprintf(f, "\n");
+        fprintf(f, "Fused (1 kernel):    %.3f ms (%.3f MPixels/s)\n", fused_ms, fused_throughput);
+        fprintf(f, "Separate (3 kernel): %.3f ms (%.3f MPixels/s)\n", separate_ms, separate_throughput);
+        fprintf(f, "CPU reference:       %.3f ms\n", cpu_ms.count());
+        fprintf(f, "\n");
+        fprintf(f, "Fused speedup vs separate: %.2fx\n", speedup);
+        fprintf(f, "Fused verification: %s\n", fused_match ? "PASSED" : "FAILED");
+        fprintf(f, "Separate verification: %s\n", separate_match ? "PASSED" : "FAILED");
+        fclose(f);
+    }
 
     cudaFree(d_input);
     cudaFree(d_kernel);
