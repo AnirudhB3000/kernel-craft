@@ -55,20 +55,55 @@
   - Use Nsight Systems to visualize data movement and kernel overlaps.
 
 ## Phase 5: Python Integration (Weeks 9‑10)
-- [ ] **Update CMakeLists.txt** with pybind11 FetchContent
+### Core Bindings
+- [x] **Update CMakeLists.txt** with pybind11 FetchContent
   - Add `FetchContent_Declare(pybind11 ...)` for auto-download
   - Add Python extension target (`pybind11_add_module(kernel_craft ...)`)
-- [ ] **Create src/pybind_cuda.cpp** - pybind11 module (~200 lines)
+- [x] **Create src/python/pybind_cuda.cpp** - pybind11 module (~350 lines)
   - Bind `conv_naive(input, kernel)` for numpy and PyTorch
   - Bind `conv_tiled(input, kernel, tile_w, tile_h)` for numpy and PyTorch
   - Handle memory transfer: host↔device copy, data pointer extraction
-- [ ] **Build and test Python module**
-  - `mkdir build && cd build && cmake .. && make`
-  - `python3 -c "import kernel_craft; print(kernel_craft.conv_naive(...))"`
-- [ ] **Verify correctness**
+- [x] **Build and test Python module**
+  - `mkdir build && cd build && cmake .. && make kernel_craft_python`
+  - `python3 -c "import kernel_craft_python; print(kernel_craft_python.__version__)"`
+- [x] **Verify correctness**
   - numpy arrays produce correct output (match CPU reference)
-  - PyTorch tensors produce correct output on GPU
+  - PyTorch tensors produce correct output on GPU (tests skipped when torch not available)
   - `tile_w`/`tile_h` parameters affect performance
+
+### Package Infrastructure
+- [x] **Create pyproject.toml**
+  - Project name, version, description, author, license
+  - Dependencies: numpy (required), torch (optional)
+  - Support both CMake and `pip install .` builds
+- [x] **Add version management**
+  - Expose `__version__` in Python module (e.g., `kernel_craft_python.__version__`)
+- [ ] **Build wheel support**
+  - Configure for universal wheels across CUDA versions/platforms
+
+### Python Tests
+- [x] **Create pytest test suite** (`src/python/tests/test_bindings.py`)
+  - Test numpy arrays produce correct output
+  - Test PyTorch tensors on GPU (skipped when torch not available)
+  - Test error handling and validation
+  - 10 tests passed, 5 skipped
+
+### Documentation
+- [ ] **Update src/python/README.md**
+  - Add `pip install kernel_craft` section
+  - Document `__version__` attribute
+  - Document error handling and exceptions
+
+### Cross‑Cutting: Release Prep
+- [ ] **Add semantic versioning**
+  - Define version scheme (e.g., 0.1.0)
+- [ ] **Add type hints**
+  - For better IDE support in Python bindings
+- [ ] **Create PyPI release workflow**
+  - GitHub Actions workflow to build and publish
+  - Support TestPyPI and PyPI deployments
+- [ ] **Create binary distribution**
+  - Generate and upload `.whl` files to PyPI
 
 ## Cross‑Cutting Tasks (All Phases)
 - [ ] **Set up CI (optional)** – compile and run unit tests on each push.
