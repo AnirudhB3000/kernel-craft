@@ -11,7 +11,7 @@ sys.path.insert(0, '../../src/python/build')
 
 import numpy as np
 from PIL import Image
-import kernel_craft_python as kc
+import kernel_craft_python as kc # type: ignore
 
 
 def load_image(path):
