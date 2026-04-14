@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 3.18)
-cmake_policy(SET CMP0148 NEW)
 project(kernel_craft LANGUAGES CXX CUDA)
 
 # ------------------------------------------------------------
