@@ -10,7 +10,6 @@ jobs:
   # GPU tests on self-hosted runner with local GPU
   gpu-test:
     runs-on: [self-hosted, linux, gpu]
-    if: runner.os == 'Linux' && runner.name != ''
     
     steps:
       - name: Checkout code
@@ -47,7 +46,6 @@ jobs:
   # Build-only job for PRs (no GPU required)
   build-only:
     runs-on: ubuntu-latest
-    container: nvidia/cuda:12.4.0-devel-ubuntu22.04
     
     steps:
       - name: Checkout code
