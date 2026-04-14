@@ -482,7 +482,7 @@ PYBIND11_MODULE(kernel_craft_python, m) {
 
     // ---- Version ----
     // Expose __version__ attribute for programmatic access
-    m.attr("__version__") = "0.1.0";
+    m.attr("__version__") = "0.1.1";
 
     // ---- conv_naive - numpy array overload ----
     m.def("conv_naive", &conv_naive_numpy,

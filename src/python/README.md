@@ -4,7 +4,18 @@ CUDA convolution kernels exposed to Python with numpy and PyTorch support.
 
 ## Installation
 
-### Option 1: Build with Python (recommended for distribution)
+### Option 1: pip (recommended for users)
+
+```bash
+pip install kernel-craft
+```
+
+Requires:
+- Python 3.11 - 3.12
+- numpy >= 1.20
+- CUDA runtime (for GPU execution)
+
+### Option 2: Build with Python (recommended for distribution)
 
 ```bash
 cd src/python
@@ -47,8 +58,15 @@ out = kc.conv_tiled(input, kernel, tile_w=8, tile_h=8)  # -> np.ndarray
 ## Version
 
 ```python
+import kernel_craft
+print(kernel_craft.__version__)  # "0.1.1"
+```
+
+Or via the module directly:
+
+```python
 import kernel_craft_python as kc
-print(kc.__version__)  # "0.1.0"
+print(kc.__version__)  # "0.1.1"
 ```
 
 ## PyTorch Tensors
@@ -94,6 +112,24 @@ All functions raise `RuntimeError` with descriptive messages for:
 - Invalid input dimensions (must be 2D)
 - Invalid kernel dimensions (must be 2D, square, odd-sized)
 - Invalid dtype (must be float32)
+- CUDA errors (kernel launch failures, memory errors)
+
+### Quick Start with pip
+
+```python
+import kernel_craft
+import numpy as np
+
+input = np.random.randn(256, 256).astype(np.float32)
+kernel = np.random.randn(3, 3).astype(np.float32)
+
+# Works with both import styles
+out = kernel_craft.conv_naive(input, kernel)  # Recommended
+
+# Or with the internal module name
+import kernel_craft_python as kc
+out = kc.conv_tiled(input, kernel, tile_w=8, tile_h=8)
+```
 
 ## Publishing to PyPI
 

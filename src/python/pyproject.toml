@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=61.0", "wheel", "cmake>=3.18"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -31,9 +31,11 @@ dev = ["pytest>=7.0", "twine>=4.0.0", "build>=1.0.0"]
 [project.urls]
 Homepage = "https://github.com/anomalyco/kernel-craft"
 
+# Build tags for different CUDA versions
+# Use: pip install kernel-craft --extra-index-url https://download.pytorch.org/whl/cu121
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["kernel_craft_python*"]
+include = ["kernel_craft_python*", "kernel_craft_python.pyi"]
 
 [tool.setuptools.package-data]
-kernel_craft_python = ["*.so"]
+kernel_craft_python = ["*.so", "*.pyi"]

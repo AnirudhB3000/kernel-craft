@@ -9,7 +9,9 @@ CUDA kernels for machine learning systems optimization.
 - **Sparse Convolution** (`src/custom_op.cu`) - Coordinate-list format for sparse inputs
 - **Fused Pipeline** (`src/pipeline_fused.cu`) - Conv + BatchNorm + ReLU in single kernel
 - **GPU Preprocessing** (`src/preprocess_gpu.cu`) - Resize, normalize, flip operations on GPU
-- **Python Bindings** (`src/python/`) - pybind11 module exposing kernels to numpy and PyTorch
+- **Python Bindings** (`src/python/`) - pybind11 module with numpy and PyTorch support
+  - Install via `pip install kernel-craft` (PyPI)
+  - Type stubs (`.pyi`) for IDE support
 
 ## Directory Structure
 
@@ -17,14 +19,15 @@ CUDA kernels for machine learning systems optimization.
 kernel-craft/
 ├── src/                     # CUDA kernel implementations
 │   ├── conv_naive.cu        # Naive 2D convolution
-│   ├── conv_tiled.cu       # Tiled 2D convolution
+│   ├── conv_tiled.cu       # Tiled 2D convolution  
 │   ├── custom_op.cu        # Sparse convolution
 │   ├── pipeline_fused.cu   # Fused conv+batchnorm+relu
 │   ├── pipeline_separate.cu # Separate pipeline kernels
-│   ├── preprocess_gpu.cu   # GPU preprocessing (resize, normalize, flip)
+│   ├── preprocess_gpu.cu   # GPU preprocessing
 │   └── python/
-│       ├── pybind_cuda.cpp # Python bindings
-│       ├── build/          # Compiled .so module
+│       ├── pybind_cuda.cpp # Python bindings (pybind11)
+│       ├── pyproject.toml  # Package configuration
+│       ├── kernel_craft_python/  # Built module + type stubs
 │       └── tests/          # Python tests
 ├── benchmarks/              # Benchmark programs
 ├── tests/                   # C++ unit tests
@@ -32,10 +35,8 @@ kernel-craft/
 │   ├── cpp/                 # C++ examples
 │   └── python/              # Python examples
 ├── data/
-│   ├── sample_images/       # Input images
-│   └── outputs/             # Output images
 ├── CMakeLists.txt           # Build configuration
-├── README.md                # This file
+├── README.md
 └── AGENTS.md                # Project guidelines
 ```
 
@@ -62,33 +63,41 @@ python -m pytest tests/ -v
 
 ## Python Usage
 
-### Install
+### Install from PyPI (recommended)
 
-Build the Python module:
+```bash
+pip install kernel-craft
+```
+
+Requires: Python 3.11-3.12, numpy, CUDA runtime
+
+### Build from source
+
 ```bash
 cd src/python
 python -m build
 ```
 
-The `.so` file will be in `src/python/build/`.
+The `.so` file will be in `src/python/build/` or `src/python/kernel_craft_python/`.
 
 ### Usage
 
 ```python
-import sys
-sys.path.insert(0, 'src/python/build')
-import kernel_craft_python as kc
+import kernel_craft  # or: import kernel_craft_python as kc
 import numpy as np
 
 # numpy arrays
 input = np.random.rand(512, 512).astype(np.float32)
 kernel = np.array([[0,1,0],[1,-4,1],[0,1,0]], dtype=np.float32)
-result = kc.conv_naive(input, kernel)
+result = kernel_craft.conv_naive(input, kernel)
 
 # PyTorch tensors on CUDA
 import torch
 input_t = torch.rand(512, 512, device='cuda')
-result_t = kc.conv_naive(input_t, kernel)
+result_t = kernel_craft.conv_naive(input_t, kernel)
+
+# Tiled convolution with custom tile size
+result = kernel_craft.conv_tiled(input, kernel, tile_w=8, tile_h=8)
 ```
 
 ## Performance Results
