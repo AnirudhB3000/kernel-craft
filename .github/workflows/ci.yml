@@ -31,7 +31,8 @@ jobs:
         working-directory: src/python
         run: |
           if nvidia-smi &>/dev/null; then
-            PYTHONPATH=kernel_craft_python:$PYTHONPATH python3 -m pytest tests/ -v
+            # Build extracts to kernel_craft_python/ directory
+            PYTHONPATH="$(pwd)/kernel_craft_python:$PYTHONPATH" python3 -m pytest tests/ -v
           else
             echo "Skipping Python GPU tests (no GPU available)"
           fi
