@@ -7,8 +7,46 @@ on:
     branches: [main, master]
 
 jobs:
-  build-and-test:
-    runs-on: ubuntu-22.04
+  # GPU tests on self-hosted runner with local GPU
+  gpu-test:
+    runs-on: [self-hosted, linux, gpu]
+    if: runner.os == 'Linux' && runner.name != ''
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake make python3 python3-pip python3-venv git
+
+      - name: Set up Python
+        run: python3 -m pip install numpy pytest build
+
+      - name: Build C++ code
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -DCMAKE_CUDA_ARCHITECTURES=75
+          make -j$(nproc)
+
+      - name: Run C++ tests
+        working-directory: build
+        run: ctest --output-on-failure
+
+      - name: Build Python module
+        working-directory: src/python
+        run: python3 -m build
+
+      - name: Run Python tests
+        working-directory: src/python
+        run: |
+          PYTHONPATH="$(pwd)/kernel_craft_python:$PYTHONPATH" python3 -m pytest tests/ -v
+
+  # Build-only job for PRs (no GPU required)
+  build-only:
+    runs-on: ubuntu-latest
     container: nvidia/cuda:12.4.0-devel-ubuntu22.04
     
     steps:
@@ -23,13 +61,13 @@ jobs:
       - name: Set up Python
         run: python3 -m pip install numpy pytest build
 
+      - name: Build C++ code
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -DCMAKE_CUDA_ARCHITECTURES=75
+          make -j$(nproc)
+
       - name: Build Python module
         working-directory: src/python
         run: python3 -m build
-
-      - name: Run Python tests
-        working-directory: src/python
-        run: |
-          # Python GPU tests require actual GPU hardware
-          # Run locally with: PYTHONPATH=$(pwd)/kernel_craft_python pytest tests/ -v
-          echo "Skipping Python GPU tests (requires local GPU hardware)"
