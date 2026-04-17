@@ -30,7 +30,7 @@ jobs:
           apt-get install -y cmake make python3 python3-pip python3-venv git
 
       - name: Set up Python
-        run: python3 -m pip install numpy pytest build
+        run: python3 -m pip install --break-system-packages numpy pytest build
 
       - name: Build C++ code
         run: |
@@ -74,7 +74,7 @@ jobs:
           which cmake || sudo apt-get update && sudo apt-get install -y cmake make python3 python3-pip python3-venv git
 
       - name: Set up Python
-        run: python3 -m pip install numpy pytest build
+        run: python3 -m pip install --break-system-packages numpy pytest build
 
       - name: Build C++ code
         env:
