@@ -97,6 +97,22 @@ target_link_libraries(test_pipeline PRIVATE kernels)
 add_executable(test_custom_op tests/test_custom_op.cpp)
 target_link_libraries(test_custom_op PRIVATE kernels)
 
+# Test executable for memory pool
+add_executable(test_memory_pool tests/test_memory_pool.cpp)
+target_link_libraries(test_memory_pool PRIVATE kernels)
+
+# Test executable for CUDA graphs
+add_executable(test_cuda_graphs tests/test_cuda_graphs.cpp)
+target_link_libraries(test_cuda_graphs PRIVATE kernels)
+
+# Test executable for mixed precision
+add_executable(test_mixed_precision tests/test_mixed_precision.cpp)
+target_link_libraries(test_mixed_precision PRIVATE kernels)
+
+# Test executable for persistent kernels
+add_executable(test_persistent_kernels tests/test_persistent_kernels.cpp)
+target_link_libraries(test_persistent_kernels PRIVATE kernels)
+
 # Benchmark executable for convolution
 add_executable(benchmark_conv benchmarks/benchmark_conv.cpp)
 target_link_libraries(benchmark_conv PRIVATE kernels)
@@ -113,6 +129,22 @@ target_link_libraries(benchmark_pipeline PRIVATE kernels)
 add_executable(benchmark_full_pipeline benchmarks/benchmark_full_pipeline.cpp)
 target_link_libraries(benchmark_full_pipeline PRIVATE kernels)
 
+# Benchmark executable for memory pool
+add_executable(benchmark_memory_pool benchmarks/benchmark_memory_pool.cpp)
+target_link_libraries(benchmark_memory_pool PRIVATE kernels)
+
+# Benchmark executable for CUDA graphs
+add_executable(benchmark_cuda_graphs benchmarks/benchmark_cuda_graphs.cpp)
+target_link_libraries(benchmark_cuda_graphs PRIVATE kernels)
+
+# Benchmark executable for mixed precision
+add_executable(benchmark_mixed_precision benchmarks/benchmark_mixed_precision.cpp)
+target_link_libraries(benchmark_mixed_precision PRIVATE kernels)
+
+# Benchmark executable for persistent kernels
+add_executable(benchmark_persistent_kernels benchmarks/benchmark_persistent_kernels.cpp)
+target_link_libraries(benchmark_persistent_kernels PRIVATE kernels)
+
 # Enable CTest BEFORE registering tests
 include(CTest)
 enable_testing()
@@ -123,24 +155,32 @@ add_test(NAME conv_tiled_test COMMAND test_conv_tiled)
 add_test(NAME preprocess_test COMMAND test_preprocess)
 add_test(NAME pipeline_test COMMAND test_pipeline)
 add_test(NAME custom_op_test COMMAND test_custom_op)
+add_test(NAME memory_pool_test COMMAND test_memory_pool)
+add_test(NAME cuda_graphs_test COMMAND test_cuda_graphs)
+add_test(NAME mixed_precision_test COMMAND test_mixed_precision)
+add_test(NAME persistent_kernels_test COMMAND test_persistent_kernels)
 
 # Register all benchmarks as tests
 add_test(NAME benchmark_conv COMMAND benchmark_conv)
 add_test(NAME benchmark_custom COMMAND benchmark_custom)
 add_test(NAME benchmark_pipeline COMMAND benchmark_pipeline)
 add_test(NAME benchmark_full_pipeline COMMAND benchmark_full_pipeline)
+add_test(NAME benchmark_memory_pool COMMAND benchmark_memory_pool)
+add_test(NAME benchmark_cuda_graphs COMMAND benchmark_cuda_graphs)
+add_test(NAME benchmark_mixed_precision COMMAND benchmark_mixed_precision)
+add_test(NAME benchmark_persistent_kernels COMMAND benchmark_persistent_kernels)
 
 # Convenience target that runs all registered tests and shows a concise summary
 add_custom_target(run_tests
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-    DEPENDS test_conv_naive test_conv_tiled test_preprocess test_pipeline test_custom_op
+    DEPENDS test_conv_naive test_conv_tiled test_preprocess test_pipeline test_custom_op test_memory_pool test_cuda_graphs test_mixed_precision test_persistent_kernels
     COMMENT "Running all unit tests via CTest"
 )
 
 # Convenience target to run only benchmarks via CTest (provides summary)
 add_custom_target(run_benchmarks
     COMMAND ${CMAKE_CTEST_COMMAND} -R benchmark_ --output-on-failure
-    DEPENDS benchmark_conv benchmark_custom benchmark_pipeline benchmark_full_pipeline
+    DEPENDS benchmark_conv benchmark_custom benchmark_pipeline benchmark_full_pipeline benchmark_memory_pool benchmark_cuda_graphs benchmark_mixed_precision benchmark_persistent_kernels
     COMMENT "Running all benchmarks via CTest"
 )
 

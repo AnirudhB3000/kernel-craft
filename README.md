@@ -4,14 +4,30 @@ CUDA kernels for machine learning systems optimization.
 
 ## Features
 
+### Core Convolution Kernels
+
 - **Naive Convolution** (`src/conv_naive.cu`) - Baseline 2D convolution with one thread per output pixel
 - **Tiled Convolution** (`src/conv_tiled.cu`) - Optimized using shared memory tiling for better memory bandwidth
 - **Sparse Convolution** (`src/custom_op.cu`) - Coordinate-list format for sparse inputs
+
+### Pipeline Kernels
+
 - **Fused Pipeline** (`src/pipeline_fused.cu`) - Conv + BatchNorm + ReLU in single kernel
+- **Separate Pipeline** (`src/pipeline_separate.cu`) - Individual pipeline kernels
 - **GPU Preprocessing** (`src/preprocess_gpu.cu`) - Resize, normalize, flip operations on GPU
-- **Python Bindings** (`src/python/`) - pybind11 module with numpy and PyTorch support
-  - Install via `pip install kernel-craft` (PyPI)
-  - Type stubs (`.pyi`) for IDE support
+
+### Performance Optimization
+
+- **Memory Pool** (`src/performance/memory_pool.cu`) - Pre-allocated buffers to eliminate cudaMalloc/cudaFree overhead
+- **CUDA Graphs** (`src/performance/cuda_graphs.cu`) - Captured kernel DAG for reduced launch overhead
+- **Mixed Precision** (`src/performance/mixed_precision.cu`) - FP16/TF32 kernels for Tensor Cores
+- **Persistent Kernels** (`src/performance/persistent_kernels.cu`) - Kernel reuse across batches
+
+### Python Bindings
+
+- **pybind11 module** (`src/python/`) - numpy and PyTorch support
+- Install via `pip install kernel-craft` (PyPI)
+- Type stubs (`.pyi`) for IDE support
 
 ## Directory Structure
 
@@ -19,25 +35,29 @@ CUDA kernels for machine learning systems optimization.
 kernel-craft/
 ├── src/                     # CUDA kernel implementations
 │   ├── conv_naive.cu        # Naive 2D convolution
-│   ├── conv_tiled.cu       # Tiled 2D convolution  
-│   ├── custom_op.cu        # Sparse convolution
-│   ├── pipeline_fused.cu   # Fused conv+batchnorm+relu
-│   ├── pipeline_separate.cu # Separate pipeline kernels
-│   ├── preprocess_gpu.cu   # GPU preprocessing
+│   ├── conv_tiled.cu        # Tiled 2D convolution
+│   ├── custom_op.cu         # Sparse convolution
+│   ├── pipeline_fused.cu    # Fused conv+batchnorm+relu
+│   ├── pipeline_separate.cu  # Separate pipeline kernels
+│   ├── preprocess_gpu.cu    # GPU preprocessing
+│   ├── performance/        # Performance optimization modules
+│   │   ├── memory_pool.cu     # Pre-allocated memory pool
+│   │   ├── cuda_graphs.cu      # CUDA Graphs integration
+│   │   ├── mixed_precision.cu  # FP16/TF32 kernels
+│   │   └── persistent_kernels.cu  # Persistent kernel mode
 │   └── python/
-│       ├── pybind_cuda.cpp # Python bindings (pybind11)
+│       ├── pybind_cuda.cpp   # Python bindings (pybind11)
 │       ├── pyproject.toml  # Package configuration
-│       ├── kernel_craft_python/  # Built module + type stubs
 │       └── tests/          # Python tests
 ├── benchmarks/              # Benchmark programs
-├── tests/                   # C++ unit tests
+├── tests/                  # C++ unit tests
 ├── examples/
-│   ├── cpp/                 # C++ examples
-│   └── python/              # Python examples
+│   ├── cpp/                # C++ examples
+│   └── python/             # Python examples
 ├── data/
 ├── CMakeLists.txt           # Build configuration
 ├── README.md
-└── AGENTS.md                # Project guidelines
+└── AGENTS.md              # Project guidelines
 ```
 
 ## Building
@@ -60,6 +80,23 @@ Run Python tests:
 cd src/python
 python -m pytest tests/ -v
 ```
+
+## Benchmarks
+
+Run individual benchmarks:
+```bash
+# Convolution benchmarks
+./bin/benchmark_conv              # Naive vs tiled
+./bin/benchmark_conv --tiled      # Tiled variant
+
+# Performance benchmarks
+./bin/benchmark_memory_pool      [width] [height] [iterations]
+./bin/benchmark_cuda_graphs      [width] [height] [iterations]
+./bin/benchmark_mixed_precision [width] [height] [iterations]
+./bin/benchmark_persistent_kernels [width] [height] [iterations]
+```
+
+Default: 1024x1024 image, 100 iterations
 
 ## Python Usage
 
@@ -102,14 +139,34 @@ result = kernel_craft.conv_tiled(input, kernel, tile_w=8, tile_h=8)
 
 ## Performance Results
 
-| Kernel | Image Size | Time (ms) |
-|--------|------------|-----------|
-| Naive | 512x512 | ~4.5 |
-| Tiled (8x8) | 512x512 | ~4.0 |
-| Tiled (16x16) | 512x512 | ~3.5 |
-| Fused pipeline | 512x512 | ~2.0 |
+### Convolution Kernels (3×3 kernel)
 
-Key insights:
+| Kernel | Image Size | Time (ms) | Notes |
+|--------|------------|-----------|---------|
+| Naive | 256×256 | ~0.45 | Baseline |
+| Tiled 8×8 | 256×2 | ~0.36 | Best for small images |
+| Tiled 16×16 | 1024×1024 | ~0.60 | Balanced |
+| Tiled 32×32 | 2048×2048 | ~1.39 | Best for large images |
+
+### Pipeline Fusion
+
+| Pipeline | Kernel Launches | Time (ms) | Speedup |
+|----------|----------------|-----------|---------|
+| Separate | 3 | ~0.96 | Baseline |
+| Fused | 1 | ~0.42 | ~2.3× |
+
+### Performance Optimizations
+
+| Optimization | Overhead Reduction |
+|-------------|-------------------|
+| Memory Pool | ~85% (buffer reuse) |
+| CUDA Graphs | ~5-10μs per launch |
+| FP16 (Tensor Cores) | ~2× throughput |
+| Persistent Kernels | ~50% lower latency |
+
+## Key Insights
+
 - Tiled convolution reduces global memory traffic by ~40%
 - Fusing conv+batchnorm+relu saves ~40% memory bandwidth vs separate kernels
-- 8x8 tile provides best overall performance for 3x3 kernels
+- 8×8 tile provides best overall performance for 3×3 kernels
+- Memory movement dominates cost more than arithmetic

@@ -24,7 +24,7 @@ python -m build
 
 The `.so` file will be at `src/python/build/kernel_craft_python.cpython-*.so`.
 
-### Option 2: Build with CMake
+### Option 3: Build with CMake
 
 ```bash
 cd /path/to/kernel-craft

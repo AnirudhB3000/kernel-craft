@@ -141,10 +141,36 @@ extern "C" void launch_batchnorm_layer(float* d_input,
  * \brief Host launcher for ReLU layer.
  */
 extern "C" void launch_relu_layer(const float* d_input,
-                                  float* d_output,
-                                  int size,
-                                  dim3 block = dim3(256, 1, 1)) {
+                                   float* d_output,
+                                   int size,
+                                   dim3 block = dim3(256, 1, 1)) {
     dim3 grid((size + block.x - 1) / block.x);
     relu_layer<<<grid, block>>>(d_input, d_output, size);
     cudaDeviceSynchronize();
+}
+
+extern "C" void relu(float* d_data, int size) {
+    dim3 grid((size + 256 - 1) / 256);
+    dim3 block(256, 1, 1);
+    relu_layer<<<grid, block>>>(d_data, d_data, size);
+    cudaDeviceSynchronize();
+}
+
+extern "C" void relu_nosync(float* d_data, int size) {
+    dim3 grid((size + 256 - 1) / 256);
+    dim3 block(256, 1, 1);
+    relu_layer<<<grid, block>>>(d_data, d_data, size);
+}
+
+extern "C" void add_bias(float* d_data, float bias, int size) {
+    dim3 grid((size + 256 - 1) / 256);
+    dim3 block(256, 1, 1);
+    batchnorm_layer<<<grid, block>>>(d_data, 1.0f, bias, d_data, size);
+    cudaDeviceSynchronize();
+}
+
+extern "C" void add_bias_nosync(float* d_data, float bias, int size) {
+    dim3 grid((size + 256 - 1) / 256);
+    dim3 block(256, 1, 1);
+    batchnorm_layer<<<grid, block>>>(d_data, 1.0f, bias, d_data, size);
 }

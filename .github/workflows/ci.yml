@@ -8,7 +8,7 @@ on:
 
 jobs:
   # Build-only job - runs on all pushes
-  build-only:
+  kernel-recipe-check:
     runs-on: ubuntu-latest
     container: nvidia/cuda:12.4.0-devel-ubuntu22.04
     
@@ -44,7 +44,7 @@ jobs:
         run: python3 -m build
 
   # GPU tests - only runs when self-hosted runner with GPU is available
-  gpu-test:
+  kernel-equipped:
     runs-on: self-hosted
     
     steps:

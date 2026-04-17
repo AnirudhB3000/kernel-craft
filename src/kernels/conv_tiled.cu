@@ -107,10 +107,10 @@ extern "C" __global__ void conv_tiled(const float* __restrict__ input,
  * \param[in] block  Block dimensions (default matches TILE_W×TILE_H).
  */
 extern "C" void launch_conv_tiled(const float* d_input,
-                                 const float* d_kernel,
-                                 float* d_output,
-                                 int width, int height, int ksize,
-                                 dim3 block = dim3(TILE_W, TILE_H, 1)) {
+                                  const float* d_kernel,
+                                  float* d_output,
+                                  int width, int height, int ksize,
+                                  dim3 block = dim3(TILE_W, TILE_H, 1)) {
     // ----- Hand off to GPU -----
     dim3 grid((width + block.x - 1) / block.x,
               (height + block.y - 1) / block.y);
@@ -120,6 +120,18 @@ extern "C" void launch_conv_tiled(const float* d_input,
                                                 width, height, ksize);
     cudaDeviceSynchronize();
     // ----- Returned to CPU -----
+}
+
+extern "C" void conv_tiled_nosync(const float* d_input,
+                            const float* d_kernel,
+                            float* d_output,
+                            int width, int height, int ksize,
+                            dim3 block) {
+    dim3 grid((width + block.x - 1) / block.x,
+              (height + block.y - 1) / block.y);
+    size_t sharedMemBytes = (block.x + ksize - 1) * (block.y + ksize - 1) * sizeof(float);
+    conv_tiled<<<grid, block, sharedMemBytes>>>(d_input, d_kernel, d_output,
+                                                width, height, ksize);
 }
 
 

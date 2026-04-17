@@ -77,8 +77,38 @@ extern "C" void launch_conv_naive(const float* input, const float* kernel,
  * \param block   CUDA block dimensions (determines tile size).
  */
 extern "C" void launch_conv_tiled(const float* input, const float* kernel,
-                                   float* output, int width, int height, int ksize,
-                                   dim3 block = dim3(8,8,1));
+                                    float* output, int width, int height, int ksize,
+                                    dim3 block = dim3(8,8,1));
+
+// ---------------------------------------------------------------------------
+// Memory pool functions (defined in memory_pool.cu)
+// ---------------------------------------------------------------------------
+struct MemPool;
+extern "C" int mem_pool_create(MemPool** out_pool, int width, int height, int ksize, int numBuffers);
+extern "C" int mem_pool_destroy(MemPool* pool);
+extern "C" void* mem_pool_alloc(MemPool* pool);
+extern "C" int mem_pool_free(MemPool* pool, void* ptr);
+
+// ---------------------------------------------------------------------------
+// Mixed precision functions (defined in mixed_precision.cu)
+// ---------------------------------------------------------------------------
+extern "C" void conv_tiled_fp32_launch(const float* d_input, const float* d_kernel,
+                                        float* d_output, int width, int height, int ksize, dim3 block);
+extern "C" void conv_tiled_fp16_launch(const short* d_input, const short* d_kernel,
+                                        short* d_output, int width, int height, int ksize, dim3 block);
+extern "C" int get_fp16_support();
+extern "C" int get_tf32_support();
+extern "C" void convert_fp32_to_fp16_batch(const float* src, short* dst, int size);
+extern "C" void convert_fp16_to_fp32_batch(const short* src, float* dst, int size);
+
+// ---------------------------------------------------------------------------
+// CUDA graphs functions (defined in cuda_graphs.cu)
+// ---------------------------------------------------------------------------
+struct ConvGraph;
+extern "C" int conv_graph_create(ConvGraph** out_graph, const float* d_input, const float* d_kernel,
+                                 float* d_output, int width, int height, int ksize, dim3 block);
+extern "C" int conv_graph_destroy(ConvGraph* ctx);
+extern "C" int conv_graph_launch(ConvGraph* ctx);
 
 // ---------------------------------------------------------------------------
 // Tile size dispatch

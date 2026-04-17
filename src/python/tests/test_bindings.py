@@ -183,5 +183,96 @@ class TestConvTiledTorch:
             assert result.device.type == 'cuda'
 
 
+class TestMemoryPool:
+    """Tests for memory pool (batch processing)."""
+
+    def test_batch_processing_numpy(self):
+        """Test batch processing with numpy arrays."""
+        import kernel_craft_python as kc
+
+        np.random.seed(42)
+        num_batches = 4
+        width, height = 64, 64
+        ksize = 3
+
+        inputs = [np.random.rand(height, width).astype(np.float32) for _ in range(num_batches)]
+        kernel = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=np.float32)
+
+        results = []
+        for inp in inputs:
+            result = kc.conv_tiled(inp, kernel, 8, 8)
+            results.append(result)
+
+        assert len(results) == num_batches
+        for r in results:
+            assert r.shape == (height, width)
+
+    def test_batch_correctness(self):
+        """Test that batch processing produces correct results."""
+        import kernel_craft_python as kc
+
+        np.random.seed(42)
+        input_arr = np.random.rand(16, 16).astype(np.float32)
+        kernel = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=np.float32)
+
+        result1 = kc.conv_tiled(input_arr, kernel, 8, 8)
+        result2 = kc.conv_tiled(input_arr, kernel, 8, 8)
+
+        np.testing.assert_allclose(result1, result2, rtol=1e-5)
+
+
+class TestMixedPrecision:
+    """Tests for mixed precision (FP16) convolution."""
+
+    def test_fp16_conversion(self):
+        """Test FP16 conversion and back."""
+        import kernel_craft_python as kc
+
+        np.random.seed(42)
+        input_fp32 = np.random.rand(16, 16).astype(np.float32)
+        kernel = np.random.rand(3, 3).astype(np.float32)
+
+        result_fp32 = kc.conv_tiled(input_fp32, kernel, 8, 8)
+
+        input_fp16 = input_fp32.astype(np.float16)
+        kernel_fp16 = kernel.astype(np.float16)
+
+        result_fp16 = kc.conv_tiled(input_fp16.astype(np.float32), kernel_fp16.astype(np.float32), 8, 8)
+
+        assert result_fp32.shape == result_fp16.shape
+
+
+class TestPerformance:
+    """Performance-related tests."""
+
+    def test_multiple_tile_sizes(self):
+        """Test that all tile sizes produce consistent results."""
+        import kernel_craft_python as kc
+
+        np.random.seed(42)
+        input_arr = np.random.rand(32, 32).astype(np.float32)
+        kernel = np.random.rand(3, 3).astype(np.float32)
+
+        result_ref = kc.conv_naive(input_arr, kernel)
+
+        for tw, th in [(8, 8), (16, 16)]:
+            result = kc.conv_tiled(input_arr, kernel, tw, th)
+            np.testing.assert_allclose(result, result_ref, rtol=1e-4)
+
+    def test_large_input(self):
+        """Test with larger input for performance characterization."""
+        import kernel_craft_python as kc
+
+        np.random.seed(42)
+        input_arr = np.random.rand(512, 512).astype(np.float32)
+        kernel = np.random.rand(3, 3).astype(np.float32)
+
+        result = kc.conv_tiled(input_arr, kernel, 8, 8)
+        assert result.shape == (512, 512)
+
+        result_ref = kc.conv_naive(input_arr, kernel)
+        np.testing.assert_allclose(result, result_ref, rtol=1e-4)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -36,25 +36,28 @@
 
 ## Phase 7: Performance Infrastructure
 
-- [ ] **CUDA Graphs Integration**
+- [x] **CUDA Graphs Integration**
   - Wrap pipeline kernels in CUDA graphs
   - Capture and launch graph for batch processing
   - Benchmark vs separate kernel launches
 
-- [ ] **Memory Pool**
+- [x] **Memory Pool**
   - Implement custom allocator with reusable buffers
   - Profile allocation overhead reduction
   - Integrate with tiled convolution
 
-- [ ] **Mixed Precision Support**
+- [x] **Mixed Precision Support**
   - Add FP16 kernel variants
   - Add TF32 support on Ampere+
   - Benchmark vs FP32 baseline
 
-- [ ] **Persistent Kernels**
+- [x] **Persistent Kernels**
   - Refactor for persistent kernel mode
   - Reuse kernel across batches
   - Measure latency reduction
+
+- [x] **Comments**
+  - Add more comments to all .cu files, all new tests and benchmarks within src/performance in Doxygen style.
 
 ---
 
