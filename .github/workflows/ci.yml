@@ -7,9 +7,40 @@ on:
     branches: [main, master]
 
 jobs:
-  # GPU tests on self-hosted runner with local GPU
+  # Build-only job - runs on all pushes
+  build-only:
+    runs-on: ubuntu-latest
+    container: nvidia/cuda:12.4.0-devel-ubuntu22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y cmake make python3 python3-pip python3-venv git
+
+      - name: Set up Python
+        run: python3 -m pip install numpy pytest build
+
+      - name: Build C++ code
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -DCMAKE_CUDA_ARCHITECTURES=75
+          make -j$(nproc)
+
+      - name: Build Python module
+        working-directory: src/python
+        run: python3 -m build
+
+  # GPU tests - only runs when self-hosted runner with GPU is available
+  # Set up a self-hosted runner at: Settings > Actions > Runners > New self-hosted runner
+  # Use labels: self-hosted,linux,gpu
   gpu-test:
     runs-on: [self-hosted, linux, gpu]
+    if: ${{ github.repository == 'anomalyco/kernel-craft' }}
     
     steps:
       - name: Checkout code
@@ -42,30 +73,3 @@ jobs:
         working-directory: src/python
         run: |
           PYTHONPATH="$(pwd)/kernel_craft_python:$PYTHONPATH" python3 -m pytest tests/ -v
-
-  # Build-only job for PRs (no GPU required)
-  build-only:
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install build dependencies
-        run: |
-          apt-get update
-          apt-get install -y cmake make python3 python3-pip python3-venv git
-
-      - name: Set up Python
-        run: python3 -m pip install numpy pytest build
-
-      - name: Build C++ code
-        run: |
-          mkdir -p build
-          cd build
-          cmake .. -DCMAKE_CUDA_ARCHITECTURES=75
-          make -j$(nproc)
-
-      - name: Build Python module
-        working-directory: src/python
-        run: python3 -m build
