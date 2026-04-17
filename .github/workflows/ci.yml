@@ -47,7 +47,7 @@ jobs:
   # Set up a self-hosted runner at: Settings > Actions > Runners > New self-hosted runner
   # Use labels: self-hosted,linux,gpu
   gpu-test:
-    runs-on: [self-hosted, linux, gpu]
+    runs-on: self-hosted
     
     steps:
       - name: Checkout code
