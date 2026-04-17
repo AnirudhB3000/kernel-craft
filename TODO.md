@@ -14,7 +14,7 @@
 
 **Option 1**: Use GitHub Actions self-hosted runner on local machine ✓ COMPLETE
 - [x] CI workflow updated for self-hosted runner with GPU label
-- [x] Self-hosted runner set up on local machine (aniru@wawawewasROG)
+- [x] Self-hosted runner set up on local machine
 - [x] Runner connected to GitHub with `gpu` label
 
 ### Setup Instructions for Self-Hosted Runner

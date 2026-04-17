@@ -16,6 +16,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
       - name: Install build dependencies
         run: |
           apt-get update
@@ -45,6 +53,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Cache CUDA compute cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cuda/cache
+          key: ${{ runner.os }}-cuda-cache-${{ hashFiles('src/*.cu') }}
+          restore-keys: |
+            ${{ runner.os }}-cuda-cache-
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -54,6 +78,8 @@ jobs:
         run: python3 -m pip install numpy pytest build
 
       - name: Build C++ code
+        env:
+          CUDA_CACHE_PATH: ~/.cuda/cache
         run: |
           mkdir -p build
           cd build
