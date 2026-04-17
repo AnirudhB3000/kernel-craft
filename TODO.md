@@ -12,10 +12,10 @@
 
 ## Phase 6: CI with Local GPU Runner (Optional)
 
-**Option 1**: Use GitHub Actions self-hosted runner on local machine ✓ IN PROGRESS
-- [ ] CI workflow updated for self-hosted runner with GPU label
-- [ ] **Set up self-hosted runner on local machine** (instructions below)
-- [ ] Add runner to GitHub repository with `gpu` label
+**Option 1**: Use GitHub Actions self-hosted runner on local machine ✓ COMPLETE
+- [x] CI workflow updated for self-hosted runner with GPU label
+- [x] Self-hosted runner set up on local machine (aniru@wawawewasROG)
+- [x] Runner connected to GitHub with `gpu` label
 
 ### Setup Instructions for Self-Hosted Runner
 

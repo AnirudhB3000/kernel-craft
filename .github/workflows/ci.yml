@@ -40,7 +40,6 @@ jobs:
   # Use labels: self-hosted,linux,gpu
   gpu-test:
     runs-on: [self-hosted, linux, gpu]
-    if: ${{ github.repository == 'anomalyco/kernel-craft' }}
     
     steps:
       - name: Checkout code
