@@ -125,7 +125,14 @@ extern "C" void launch_conv_layer(const float* d_input,
 }
 
 /**
- * \brief Host launcher for batchnorm layer.
+ * \brief Launch batch normalization layer.
+ *
+ * \param d_input  Input feature map.
+ * \param gamma   Scale parameter.
+ * \param beta    Shift parameter.
+ * \param d_output Output feature map.
+ * \param size    Number of elements.
+ * \param block   Block dimensions.
  */
 extern "C" void launch_batchnorm_layer(float* d_input,
                                         float gamma, float beta,
@@ -138,7 +145,12 @@ extern "C" void launch_batchnorm_layer(float* d_input,
 }
 
 /**
- * \brief Host launcher for ReLU layer.
+ * \brief Launch ReLU activation layer.
+ *
+ * \param d_input  Input activation.
+ * \param d_output Output activation.
+ * \param size    Number of elements.
+ * \param block   Block dimensions.
  */
 extern "C" void launch_relu_layer(const float* d_input,
                                    float* d_output,
@@ -149,19 +161,25 @@ extern "C" void launch_relu_layer(const float* d_input,
     cudaDeviceSynchronize();
 }
 
-extern "C" void relu(float* d_data, int size) {
-    dim3 grid((size + 256 - 1) / 256);
-    dim3 block(256, 1, 1);
-    relu_layer<<<grid, block>>>(d_data, d_data, size);
-    cudaDeviceSynchronize();
-}
-
+/**
+ * \brief ReLU activation in-place (no sync).
+ *
+ * \param d_data Activation data.
+ * \param size  Number of elements.
+ */
 extern "C" void relu_nosync(float* d_data, int size) {
     dim3 grid((size + 256 - 1) / 256);
     dim3 block(256, 1, 1);
     relu_layer<<<grid, block>>>(d_data, d_data, size);
 }
 
+/**
+ * \brief Add bias to activation (in-place).
+ *
+ * \param d_data Activation data.
+ * \param bias Bias value.
+ * \param size  Number of elements.
+ */
 extern "C" void add_bias(float* d_data, float bias, int size) {
     dim3 grid((size + 256 - 1) / 256);
     dim3 block(256, 1, 1);
@@ -169,6 +187,13 @@ extern "C" void add_bias(float* d_data, float bias, int size) {
     cudaDeviceSynchronize();
 }
 
+/**
+ * \brief Add bias to activation in-place (no sync).
+ *
+ * \param d_data Activation data.
+ * \param bias Bias value.
+ * \param size  Number of elements.
+ */
 extern "C" void add_bias_nosync(float* d_data, float bias, int size) {
     dim3 grid((size + 256 - 1) / 256);
     dim3 block(256, 1, 1);

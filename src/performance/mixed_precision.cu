@@ -144,6 +144,12 @@ __global__ void conv_tiled_tf32(const float* __restrict__ input,
     }
 }
 
+/**
+ * \brief ReLU activation kernel for FP16 data.
+ *
+ * \param data Input/output activation data (half-precision).
+ * \param size Number of elements.
+ */
 __global__ void relu_fp16(half* __restrict__ data, int size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
@@ -153,6 +159,13 @@ __global__ void relu_fp16(half* __restrict__ data, int size) {
     }
 }
 
+/**
+ * \brief Bias addition kernel for FP16 data.
+ *
+ * \param data Input/output activation data.
+ * \param bias Bias value to add.
+ * \param size Number of elements.
+ */
 __global__ void add_bias_fp16(half* __restrict__ data, half bias, int size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
@@ -161,6 +174,17 @@ __global__ void add_bias_fp16(half* __restrict__ data, half bias, int size) {
     }
 }
 
+/**
+ * \brief Launch FP32 tiled convolution kernel.
+ *
+ * \param d_input  Input image (FP32).
+ * \param d_kernel Kernel (FP32).
+ * \param d_output Output buffer.
+ * \param width    Width.
+ * \param height   Height.
+ * \param ksize   Kernel size.
+ * \param block   Block dimensions.
+ */
 extern "C" void conv_tiled_fp32_launch(const float* d_input,
                                       const float* d_kernel,
                                       float* d_output,
@@ -174,6 +198,17 @@ extern "C" void conv_tiled_fp32_launch(const float* d_input,
     cudaDeviceSynchronize();
 }
 
+/**
+ * \brief Launch FP16 tiled convolution kernel.
+ *
+ * \param d_input  Input image (FP16).
+ * \param d_kernel Kernel (FP16).
+ * \param d_output Output buffer.
+ * \param width    Width.
+ * \param height   Height.
+ * \param ksize   Kernel size.
+ * \param block   Block dimensions.
+ */
 extern "C" void conv_tiled_fp16_launch(const half* d_input,
                                          const half* d_kernel,
                                          half* d_output,
@@ -187,6 +222,17 @@ extern "C" void conv_tiled_fp16_launch(const half* d_input,
     cudaDeviceSynchronize();
 }
 
+/**
+ * \brief Launch TF32 tiled convolution kernel.
+ *
+ * \param d_input  Input image.
+ * \param d_kernel Kernel.
+ * \param d_output Output buffer.
+ * \param width    Width.
+ * \param height   Height.
+ * \param ksize   Kernel size.
+ * \param block   Block dimensions.
+ */
 extern "C" void conv_tiled_tf32_launch(const float* d_input,
                                         const float* d_kernel,
                                         float* d_output,
@@ -205,18 +251,36 @@ extern "C" void conv_tiled_tf32_launch(const float* d_input,
     cudaStreamDestroy(stream);
 }
 
+/**
+ * \brief Launch FP16 ReLU activation.
+ *
+ * \param d_data Activation data.
+ * \param size   Number of elements.
+ */
 extern "C" void relu_fp16_launch(half* d_data, int size) {
     dim3 grid((size + 256 - 1) / 256);
     relu_fp16<<<grid, 256>>>(d_data, size);
     cudaDeviceSynchronize();
 }
 
+/**
+ * \brief Launch FP16 bias addition.
+ *
+ * \param d_data Activation data.
+ * \param bias  Bias value.
+ * \param size  Number of elements.
+ */
 extern "C" void add_bias_fp16_launch(half* d_data, half bias, int size) {
     dim3 grid((size + 256 - 1) / 256);
     add_bias_fp16<<<grid, 256>>>(d_data, bias, size);
     cudaDeviceSynchronize();
 }
 
+/**
+ * \brief Check if device supports FP16 (Tensor Cores).
+ *
+ * \return 1 if Volta+ (FP16 supported), 0 otherwise.
+ */
 extern "C" int get_fp16_support() {
     int device;
     cudaGetDevice(&device);
@@ -225,6 +289,11 @@ extern "C" int get_fp16_support() {
     return (prop.major >= 7);
 }
 
+/**
+ * \brief Check if device supports TF32 (Ampere+).
+ *
+ * \return 1 if Ampere+ (TF32 supported), 0 otherwise.
+ */
 extern "C" int get_tf32_support() {
     int device;
     cudaGetDevice(&device);
@@ -233,18 +302,39 @@ extern "C" int get_tf32_support() {
     return (prop.major >= 8);
 }
 
+/**
+ * \brief Convert FP32 to FP16 (CPU, element-wise).
+ *
+ * \param src Source FP32 data.
+ * \param dst Destination FP16 data.
+ * \param size Number of elements.
+ */
 extern "C" void convert_fp32_to_fp16(const float* src, half* dst, int size) {
     for (int i = 0; i < size; ++i) {
         dst[i] = __float2half(src[i]);
     }
 }
 
+/**
+ * \brief Convert FP16 to FP32 (CPU, element-wise).
+ *
+ * \param src Source FP16 data.
+ * \param dst Destination FP32 data.
+ * \param size Number of elements.
+ */
 extern "C" void convert_fp16_to_fp32(const half* src, float* dst, int size) {
     for (int i = 0; i < size; ++i) {
         dst[i] = __half2float(src[i]);
     }
 }
 
+/**
+ * \brief GPU kernel for FP32 to FP16 batch conversion.
+ *
+ * \param src Source FP32 data.
+ * \param dst Destination FP16 data.
+ * \param size Number of elements.
+ */
 __global__ void batch_convert_fp32_to_fp16(const float* src, half* dst, int size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
@@ -252,6 +342,13 @@ __global__ void batch_convert_fp32_to_fp16(const float* src, half* dst, int size
     }
 }
 
+/**
+ * \brief GPU kernel for FP16 to FP32 batch conversion.
+ *
+ * \param src Source FP16 data.
+ * \param dst Destination FP32 data.
+ * \param size Number of elements.
+ */
 __global__ void batch_convert_fp16_to_fp32(const half* src, float* dst, int size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
@@ -259,12 +356,26 @@ __global__ void batch_convert_fp16_to_fp32(const half* src, float* dst, int size
     }
 }
 
+/**
+ * \brief Launch FP32 to FP16 batch conversion on GPU.
+ *
+ * \param src Source FP32 data.
+ * \param dst Destination FP16 data.
+ * \param size Number of elements.
+ */
 extern "C" void convert_fp32_to_fp16_batch(const float* src, half* dst, int size) {
     dim3 grid((size + 256 - 1) / 256);
     batch_convert_fp32_to_fp16<<<grid, 256>>>(src, dst, size);
     cudaDeviceSynchronize();
 }
 
+/**
+ * \brief Launch FP16 to FP32 batch conversion on GPU.
+ *
+ * \param src Source FP16 data.
+ * \param dst Destination FP32 data.
+ * \param size Number of elements.
+ */
 extern "C" void convert_fp16_to_fp32_batch(const half* src, float* dst, int size) {
     dim3 grid((size + 256 - 1) / 256);
     batch_convert_fp16_to_fp32<<<grid, 256>>>(src, dst, size);

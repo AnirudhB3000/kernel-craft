@@ -60,6 +60,14 @@ struct MemPool {
 static MemPool g_pools[MAX_POOLS];
 static int g_poolCount = 0;
 
+/**
+ * \brief Reset all memory pools.
+ *
+ * Clears the global pool count and marks all pools as invalid.
+ * Should be called at program startup or when cleaning up.
+ *
+ * \return 0 on success.
+ */
 extern "C" int mem_pool_reset() {
     g_poolCount = 0;
     for (int i = 0; i < MAX_POOLS; ++i) {
@@ -68,6 +76,19 @@ extern "C" int mem_pool_reset() {
     return 0;
 }
 
+/**
+ * \brief Create a memory pool with pre-allocated buffers.
+ *
+ * Allocates buffers of the specified size and number for reuse
+ * across kernel calls. Reduces allocation overhead for batch processing.
+ *
+ * \param[out] out_pool Pointer to receive the created pool handle.
+ * \param[in] width Image width for buffer size calculation.
+ * \param[in] height Image height for buffer size calculation.
+ * \param[in] ksize Kernel size.
+ * \param[in] numBuffers Number of buffers to pre-allocate.
+ * \return 0 on success, -1 on failure.
+ */
 extern "C" int mem_pool_create(MemPool** out_pool,
                              int width, int height, int ksize,
                              int numBuffers) {
@@ -102,6 +123,14 @@ extern "C" int mem_pool_create(MemPool** out_pool,
     return 0;
 }
 
+/**
+ * \brief Destroy a memory pool and free all buffers.
+ *
+ * Releases all pre-allocated device buffers and destroys the stream.
+ *
+ * \param pool Pool handle to destroy.
+ * \return 0 on success, -1 if pool is invalid.
+ */
 extern "C" int mem_pool_destroy(MemPool* pool) {
     if (!pool || !pool->valid) return -1;
 
@@ -113,6 +142,14 @@ extern "C" int mem_pool_destroy(MemPool* pool) {
     return 0;
 }
 
+/**
+ * \brief Allocate a buffer from the pool.
+ *
+ * Returns a pointer to an available buffer or nullptr if none free.
+ *
+ * \param pool Pool to allocate from.
+ * \return Pointer to buffer on success, nullptr on failure.
+ */
 extern "C" void* mem_pool_alloc(MemPool* pool) {
     if (!pool || !pool->valid) return nullptr;
 
@@ -125,6 +162,15 @@ extern "C" void* mem_pool_alloc(MemPool* pool) {
     return nullptr;
 }
 
+/**
+ * \brief Free a buffer back to the pool.
+ *
+ * Marks the buffer as available for reuse.
+ *
+ * \param pool Pool that owns the buffer.
+ * \param ptr Pointer to buffer to free.
+ * \return 0 on success, -1 if not found.
+ */
 extern "C" int mem_pool_free(MemPool* pool, void* ptr) {
     if (!pool || !pool->valid) return -1;
 
@@ -137,8 +183,15 @@ extern "C" int mem_pool_free(MemPool* pool, void* ptr) {
     return -1;
 }
 
-typedef struct DeviceBuffer* DeviceBufferHandle;
-
+/**
+ * \brief Get a buffer by index.
+ *
+ * Returns a handle to the buffer at the specified index.
+ *
+ * \param pool Pool to query.
+ * \param idx Buffer index.
+ * \return Buffer handle on success, nullptr on failure.
+ */
 extern "C" DeviceBufferHandle mem_pool_get_buffer(MemPool* pool, int idx) {
     if (!pool || !pool->valid || idx < 0 || idx >= pool->numBuffers) {
         return nullptr;
@@ -147,12 +200,31 @@ extern "C" DeviceBufferHandle mem_pool_get_buffer(MemPool* pool, int idx) {
     return &pool->buffers[idx];
 }
 
+/**
+ * \brief Release a buffer handle.
+ *
+ * Marks the buffer as available for reuse.
+ *
+ * \param pool Pool that owns the buffer.
+ * \param handle Buffer handle to release.
+ * \return 0 on success, -1 on failure.
+ */
 extern "C" int mem_pool_release_buffer(MemPool* pool, DeviceBufferHandle handle) {
     if (!pool || !pool->valid || !handle) return -1;
     handle->state = BUFFER_FREE;
     return 0;
 }
 
+/**
+ * \brief Tiled convolution kernel using memory pool buffers.
+ *
+ * \param input  Input image.
+ * \param kernel Convolution kernel.
+ * \param output Output buffer.
+ * \param width  Image width.
+ * \param height Image height.
+ * \param ksize  Kernel size.
+ */
 __global__ void conv_tiled_kernel(const float* __restrict__ input,
                                  const float* __restrict__ kernel,
                                  float* __restrict__ output,
@@ -192,6 +264,12 @@ __global__ void conv_tiled_kernel(const float* __restrict__ input,
     }
 }
 
+/**
+ * \brief ReLU activation kernel.
+ *
+ * \param data Input/output activation data.
+ * \param size Number of elements.
+ */
 __global__ void relu_kernel(float* __restrict__ data, int size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
@@ -199,6 +277,21 @@ __global__ void relu_kernel(float* __restrict__ data, int size) {
     }
 }
 
+/**
+ * \brief Execute convolution pipeline using memory pool buffers.
+ *
+ * Allocates temp buffer from pool, runs conv + relu, copies result,
+ * returns buffer to pool.
+ *
+ * \param d_input  Input image device pointer.
+ * \param d_kernel Kernel device pointer.
+ * \param d_output Output device pointer.
+ * \param pool     Memory pool to use.
+ * \param width    Image width.
+ * \param height   Image height.
+ * \param ksize    Kernel size.
+ * \param block    Block dimensions.
+ */
 extern "C" void conv_pipeline_with_pool(const float* d_input,
                                         const float* d_kernel,
                                         float* d_output,
@@ -219,6 +312,11 @@ extern "C" void conv_pipeline_with_pool(const float* d_input,
     mem_pool_free(pool, tempBuffer);
 }
 
+/**
+ * \brief Managed buffer with reference counting.
+ *
+ * Automatically frees memory when reference count drops to zero.
+ */
 typedef struct {
     void* data;
     size_t size;
@@ -228,6 +326,12 @@ typedef struct {
 static ManagedBuffer g_managedBuffers[MAX_BUFFERS_PER_POOL];
 static int g_managedCount = 0;
 
+/**
+ * \brief Allocate a managed buffer.
+ *
+ * \param size Size in bytes to allocate.
+ * \return Device pointer on success, nullptr on failure.
+ */
 extern "C" void* managed_alloc(size_t size) {
     if (g_managedCount >= MAX_BUFFERS_PER_POOL) return nullptr;
     
@@ -238,6 +342,11 @@ extern "C" void* managed_alloc(size_t size) {
     return g_managedBuffers[g_managedCount++].data;
 }
 
+/**
+ * \brief Retain a managed buffer (increment refcount).
+ *
+ * \param ptr Device pointer to retain.
+ */
 extern "C" void managed_retain(void* ptr) {
     for (int i = 0; i < g_managedCount; ++i) {
         if (g_managedBuffers[i].data == ptr) {
@@ -247,6 +356,13 @@ extern "C" void managed_retain(void* ptr) {
     }
 }
 
+/**
+ * \brief Release a managed buffer (decrement refcount).
+ *
+ * Frees memory when refcount reaches zero.
+ *
+ * \param ptr Device pointer to release.
+ */
 extern "C" void managed_release(void* ptr) {
     for (int i = 0; i < g_managedCount; ++i) {
         if (g_managedBuffers[i].data == ptr) {

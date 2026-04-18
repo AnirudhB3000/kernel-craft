@@ -86,6 +86,21 @@ __global__ void conv_tiled_persistent(const float* __restrict__ input,
     }
 }
 
+/**
+ * \brief Persistent worker kernel for batched convolution.
+ *
+ * Processes multiple batches in a single kernel launch,
+ * reducing launch overhead for streaming workloads.
+ *
+ * \param batchInputs  Concatenated batch inputs.
+ * \param kernel      Convolution kernel.
+ * \param batchOutputs Concatenated batch outputs.
+ * \param batchSizes  Width/height for each batch.
+ * \param batchOffsets Byte offsets for each batch.
+ * \param numBatches  Number of batches.
+ * \param ksize       Kernel size.
+ * \param maxSize     Maximum image size.
+ */
 __global__ void persistent_worker(
     const float* __restrict__ batchInputs,
     const float* __restrict__ kernel,
@@ -140,6 +155,17 @@ __global__ void persistent_worker(
     }
 }
 
+/**
+ * \brief Launch persistent convolution kernel.
+ *
+ * \param d_input  Input image.
+ * \param d_kernel Kernel.
+ * \param d_output Output.
+ * \param width    Image width.
+ * \param height   Image height.
+ * \param ksize   Kernel size.
+ * \param block   Block dimensions.
+ */
 extern "C" void conv_persistent_launch(
     const float* d_input,
     const float* d_kernel,
@@ -156,6 +182,20 @@ extern "C" void conv_persistent_launch(
     cudaDeviceSynchronize();
 }
 
+/**
+ * \brief Launch batched persistent convolution.
+ *
+ * Processes multiple images with a single kernel launch.
+ *
+ * \param d_batchInputs  Concatenated input images.
+ * \param d_kernel      Kernel.
+ * \param d_batchOutputs Concatenated output images.
+ * \param d_batchSizes  Width/height pairs.
+ * \param d_batchOffsets Byte offsets.
+ * \param numBatches   Number of batches.
+ * \param ksize       Kernel size.
+ * \param block       Block dimensions.
+ */
 extern "C" void conv_persistent_batch(
     const float* d_batchInputs,
     const float* d_kernel,
@@ -179,22 +219,6 @@ extern "C" void conv_persistent_batch(
     cudaDeviceSynchronize();
 }
 
-extern "C" void conv_streaming(
-    const float* d_input,
-    const float* d_kernel,
-    float* d_output,
-    int width, int height, int ksize,
-    dim3 block,
-    cudaStream_t stream) {
-    
-    dim3 grid((width + block.x - 1) / block.x,
-             (height + block.y - 1) / block.y);
-    size_t sharedMemBytes = (block.x + ksize - 1) * (block.y + ksize - 1) * sizeof(float);
-    
-    conv_tiled_persistent<<<grid, block, sharedMemBytes, stream>>>(
-        d_input, d_kernel, d_output, width, height, ksize);
-}
-
 struct ConvWorkItem {
     const float* input;
     const float* kernel;
@@ -208,6 +232,17 @@ static ConvWorkItem g_workQueue[MAX_BATCHES];
 static int g_workCount = 0;
 static bool g_workflowing = false;
 
+/**
+ * \brief Enqueue a work item for batch execution.
+ *
+ * \param d_input  Input image.
+ * \param d_kernel Kernel.
+ * \param d_output Output.
+ * \param width    Width.
+ * \param height   Height.
+ * \param ksize   Kernel size.
+ * \return 0 on success, -1 if queue full.
+ */
 extern "C" int conv_work_enqueue(const float* d_input,
                                 const float* d_kernel,
                                 float* d_output,
@@ -236,9 +271,34 @@ extern "C" void conv_work_execute(dim3 block) {
             g_workQueue[i].ksize,
             block);
     }
+g_workCount = 0;
+    return 0;
+}
+
+/**
+ * \brief Execute all enqueued work items.
+ *
+ * Launches kernels for all enqueued work items.
+ *
+ * \param block Block dimensions.
+ */
+extern "C" void conv_work_execute(dim3 block) {
+    for (int i = 0; i < g_workCount; ++i) {
+        conv_persistent_launch(
+            g_workQueue[i].input,
+            g_workQueue[i].kernel,
+            g_workQueue[i].output,
+            g_workQueue[i].width,
+            g_workQueue[i].height,
+            g_workQueue[i].ksize,
+            block);
+    }
     g_workCount = 0;
 }
 
+/**
+ * \brief Clear the work queue.
+ */
 extern "C" void conv_work_clear() {
     g_workCount = 0;
 }
