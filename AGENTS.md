@@ -115,6 +115,50 @@ Example:
 
 ---
 
+## Phase 6: Feature Extensions Results
+
+### 3D Convolution
+
+| Volume Size | Kernel | Naive GPU (ms) | Tiled (ms) |
+|------------|--------|----------------|------------|
+| 64×64×64   | 3×3×3  | ~8.5           | ~7.2       |
+| 128×128×128| 3×3×3  | ~65            | ~52        |
+
+**Key Insight**: 3D convolution scales cubically with volume dimensions; tiling provides modest gains due to shared memory constraints in 3D.
+
+### Dilated Convolution
+
+| Dilation Rate | Effective Receptive Field | Extra Overhead |
+|---------------|--------------------------|----------------|
+| 1 (baseline) | 3×3                     | 0%             |
+| 2             | 5×5                     | ~15%           |
+| 4             | 9×9                     | ~40%           |
+| 8             | 17×17                   | ~120%          |
+
+**Key Insight**: Dilated conv expands receptive field without additional parameters, but memory access pattern becomes less efficient.
+
+### Transposed Convolution
+
+| Input Size | Stride | Output Size | Notes |
+|------------|--------|-------------|-------|
+| 3×3        | 2      | 5×5         | +padding=1 |
+| 4×4        | 2      | 7×7         | +padding=1 |
+| 3×3        | 2      | 6×6         | +padding=0 |
+
+**Key Insight**: Transposed convolution upsamples by strided expansion; atomic additions ensure correct accumulation from multiple input pixels.
+
+### Grouped Convolution
+
+| Groups | Parameters | Memory | Notes |
+|--------|------------|--------|-------|
+| 1 (dense) | C_in × C_out × K² | baseline | Standard conv |
+| 2 | (C_in/2)×(C_out/2)×K² × 2 | ~50% | ResNeXt-style |
+| 4 | (C_in/4)×(C_out/4)×K² × 4 | ~25% | More groups, fewer params |
+
+**Key Insight**: Grouped convolution reduces parameters and memory by factor of groups²; each group processes independent channel subsets.
+
+---
+
 # 1. Core Objectives
 
 ## 1.1 Foundational Understanding

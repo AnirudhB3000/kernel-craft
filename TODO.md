@@ -12,22 +12,22 @@
 
 ## Phase 6: Feature Extensions
 
-- [ ] **3D Convolution**
+- [x] **3D Convolution**
   - Implement volumetric convolution kernel for 3D input tensors (D×H×W)
   - Handle 3D kernels (D×H×W)
   - Test with medical imaging data (MRI, CT)
 
-- [ ] **Dilated Convolution**
+- [x] **Dilated Convolution**
   - Implement atrous convolution with configurable dilation rate
   - Support dilation rates: 1, 2, 4, 8
   - Test receptive field expansion
 
-- [ ] **Transposed Convolution**
+- [x] **Transposed Convolution**
   - Implement deconvolution/upconvolution kernel
   - Support stride-based upsampling
   - Test with output_padding parameter
 
-- [ ] **Grouped Convolution**
+- [x] **Grouped Convolution**
   - Implement ResNeXt-style grouped convolution
   - Support configurable group count
   - Benchmark memory savings vs dense

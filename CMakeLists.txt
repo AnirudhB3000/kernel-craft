@@ -77,6 +77,22 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
+# Test executable for 3D convolution
+add_executable(test_conv3d tests/test_conv3d.cpp)
+target_link_libraries(test_conv3d PRIVATE kernels)
+
+# Test executable for dilated convolution
+add_executable(test_conv_dilated tests/test_conv_dilated.cpp)
+target_link_libraries(test_conv_dilated PRIVATE kernels)
+
+# Test executable for transposed convolution
+add_executable(test_conv_transposed tests/test_conv_transposed.cpp)
+target_link_libraries(test_conv_transposed PRIVATE kernels)
+
+# Test executable for grouped convolution
+add_executable(test_conv_grouped tests/test_conv_grouped.cpp)
+target_link_libraries(test_conv_grouped PRIVATE kernels)
+
 # Test executable for naive convolution
 add_executable(test_conv_naive tests/test_conv_naive.cpp)
 target_link_libraries(test_conv_naive PRIVATE kernels)
@@ -150,6 +166,10 @@ include(CTest)
 enable_testing()
 
 # Register tests with CTest
+add_test(NAME conv3d_test COMMAND test_conv3d)
+add_test(NAME conv_dilated_test COMMAND test_conv_dilated)
+add_test(NAME conv_transposed_test COMMAND test_conv_transposed)
+add_test(NAME conv_grouped_test COMMAND test_conv_grouped)
 add_test(NAME conv_naive_test COMMAND test_conv_naive)
 add_test(NAME conv_tiled_test COMMAND test_conv_tiled)
 add_test(NAME preprocess_test COMMAND test_preprocess)

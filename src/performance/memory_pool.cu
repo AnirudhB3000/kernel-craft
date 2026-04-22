@@ -28,7 +28,7 @@
 extern "C" {
     void conv_tiled(const float* d_input, const float* d_kernel, float* d_output,
                     int width, int height, int ksize, dim3 block);
-    void relu(float* d_data, int size);
+    void relu_nosync(float* d_data, int size);
 }
 
 #define MAX_POOLS 8
@@ -56,6 +56,8 @@ struct MemPool {
     cudaStream_t stream;
     bool valid;
 };
+
+typedef DeviceBuffer* DeviceBufferHandle;
 
 static MemPool g_pools[MAX_POOLS];
 static int g_poolCount = 0;
@@ -304,7 +306,7 @@ extern "C" void conv_pipeline_with_pool(const float* d_input,
     }
 
     conv_tiled(d_input, d_kernel, (float*)tempBuffer, width, height, ksize, block);
-    relu((float*)tempBuffer, width * height);
+    relu_nosync((float*)tempBuffer, width * height);
     
     cudaMemcpy(d_output, tempBuffer, width * height * sizeof(float),
               cudaMemcpyDeviceToDevice);

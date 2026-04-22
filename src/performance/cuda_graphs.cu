@@ -31,7 +31,6 @@ extern "C" {
                     int width, int height, int ksize, dim3 block);
     void conv_tiled_nosync(const float* d_input, const float* d_kernel, float* d_output,
                     int width, int height, int ksize, dim3 block);
-    void relu(float* d_data, int size);
     void relu_nosync(float* d_data, int size);
     void add_bias(float* d_data, float bias, int size);
     void add_bias_nosync(float* d_data, float bias, int size);

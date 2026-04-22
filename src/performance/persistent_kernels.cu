@@ -272,33 +272,8 @@ extern "C" void conv_work_execute(dim3 block) {
             block);
     }
 g_workCount = 0;
-    return 0;
 }
 
-/**
- * \brief Execute all enqueued work items.
- *
- * Launches kernels for all enqueued work items.
- *
- * \param block Block dimensions.
- */
-extern "C" void conv_work_execute(dim3 block) {
-    for (int i = 0; i < g_workCount; ++i) {
-        conv_persistent_launch(
-            g_workQueue[i].input,
-            g_workQueue[i].kernel,
-            g_workQueue[i].output,
-            g_workQueue[i].width,
-            g_workQueue[i].height,
-            g_workQueue[i].ksize,
-            block);
-    }
-    g_workCount = 0;
-}
-
-/**
- * \brief Clear the work queue.
- */
 extern "C" void conv_work_clear() {
     g_workCount = 0;
 }
