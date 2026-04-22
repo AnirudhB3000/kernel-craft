@@ -6,7 +6,7 @@
   - Use Nsight Systems to visualize data movement and kernel overlaps.
 
 ## Phase 5: Python Integration (Weeks 9‑10)
-- [ ] **Create PyPI release workflow**
+- [x] **Create PyPI release workflow**
   - GitHub Actions workflow to build and publish
   - Support TestPyPI and PyPI deployments
 

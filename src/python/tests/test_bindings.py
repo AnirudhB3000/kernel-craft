@@ -274,5 +274,296 @@ class TestPerformance:
         np.testing.assert_allclose(result, result_ref, rtol=1e-4)
 
 
+class TestEdgeCases:
+    """Tests for edge cases and boundary conditions."""
+
+    def test_minimum_size_input(self):
+        """Test with minimum size 3x3 input."""
+        import kernel_craft_python as kc
+        input_arr = np.ones((3, 3), dtype=np.float32)
+        kernel = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
+        result = kc.conv_naive(input_arr, kernel)
+        assert result.shape == (3, 3)
+
+    def test_3x3_input_with_5x5_kernel(self):
+        """Test 3x3 input with 5x5 kernel."""
+        import kernel_craft_python as kc
+        np.random.seed(42)
+        input_arr = np.random.rand(3, 3).astype(np.float32)
+        kernel = np.random.rand(5, 5).astype(np.float32)
+        result = kc.conv_naive(input_arr, kernel)
+        assert result.shape == (3, 3)
+
+    def test_zero_input(self):
+        """Test with all-zero input."""
+        import kernel_craft_python as kc
+        input_arr = np.zeros((16, 16), dtype=np.float32)
+        kernel = np.random.rand(3, 3).astype(np.float32)
+        result = kc.conv_naive(input_arr, kernel)
+        np.testing.assert_array_equal(result, np.zeros_like(input_arr))
+
+    def test_zero_kernel(self):
+        """Test with all-zero kernel."""
+        import kernel_craft_python as kc
+        np.random.seed(42)
+        input_arr = np.random.rand(16, 16).astype(np.float32)
+        kernel = np.zeros((3, 3), dtype=np.float32)
+        result = kc.conv_naive(input_arr, kernel)
+        np.testing.assert_array_equal(result, np.zeros_like(input_arr))
+
+    def test_constant_input(self):
+        """Test with constant input."""
+        import kernel_craft_python as kc
+        input_arr = np.ones((16, 16), dtype=np.float32) * 5.0
+        kernel = np.ones((3, 3), dtype=np.float32)
+        result = kc.conv_naive(input_arr, kernel)
+        assert result.max() > 0
+
+    def test_single_pixel_output(self):
+        """Test with 1x1 output tile."""
+        import kernel_craft_python as kc
+        np.random.seed(42)
+        input_arr = np.random.rand(5, 5).astype(np.float32)
+        kernel = np.random.rand(3, 3).astype(np.float32)
+        result = kc.conv_tiled(input_arr, kernel, 1, 1)
+        result_ref = kc.conv_naive(input_arr, kernel)
+        np.testing.assert_allclose(result, result_ref, rtol=1e-4)
+
+    def test_odd_input_dimensions(self):
+        """Test with non-power-of-2 dimensions."""
+        import kernel_craft_python as kc
+        np.random.seed(42)
+        for wh in [(13, 13), (17, 23), (31, 47)]:
+            input_arr = np.random.rand(*wh).astype(np.float32)
+            kernel = np.random.rand(3, 3).astype(np.float32)
+            result = kc.conv_tiled(input_arr, kernel, 8, 8)
+            result_ref = kc.conv_naive(input_arr, kernel)
+            np.testing.assert_allclose(result, result_ref, rtol=1e-4)
+
+
+class TestKernelTypes:
+    """Tests with different kernel types."""
+
+    def test_identity_kernel(self):
+        """Test with identity kernel."""
+        import kernel_craft_python as kc
+        np.random.seed(42)
+        input_arr = np.random.rand(16, 16).astype(np.float32)
+        kernel = np.array([[0, 0, 0], [0, 1, 0], [0, 0, 0]], dtype=np.float32)
+        result = kc.conv_naive(input_arr, kernel)
+        np.testing.assert_allclose(result, input_arr, rtol=1e-5)
+
+    def test_sobel_x_kernel(self):
+        """Test with Sobel X edge detection kernel."""
+        import kernel_craft_python as kc
+        np.random.seed(42)
+        input_arr = np.random.rand(16, 16).astype(np.float32)
+        kernel = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32)
+        result_gpu = kc.conv_naive(input_arr, kernel)
+        result_cpu = conv_cpu(input_arr, kernel)
+        np.testing.assert_allclose(result_gpu, result_cpu, rtol=1e-4)
+
+    def test_sobel_y_kernel(self):
+        """Test with Sobel Y edge detection kernel."""
+        import kernel_craft_python as kc
+        np.random.seed(42)
+        input_arr = np.random.rand(16, 16).astype(np.float32)
+        kernel = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=np.float32)
+        result_gpu = kc.conv_naive(input_arr, kernel)
+        result_cpu = conv_cpu(input_arr, kernel)
+        np.testing.assert_allclose(result_gpu, result_cpu, rtol=1e-4)
+
+    def test_laplacian_kernel(self):
+        """Test with Laplacian kernel for edge detection."""
+        import kernel_craft_python as kc
+        np.random.seed(42)
+        input_arr = np.random.rand(16, 16).astype(np.float32)
+        kernel = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=np.float32)
+        result_gpu = kc.conv_naive(input_arr, kernel)
+        result_cpu = conv_cpu(input_arr, kernel)
+        np.testing.assert_allclose(result_gpu, result_cpu, rtol=1e-5)
+
+    def test_gaussian_like_kernel(self):
+        """Test with Gaussian-like blur kernel."""
+        import kernel_craft_python as kc
+        np.random.seed(42)
+        input_arr = np.random.rand(16, 16).astype(np.float32)
+        kernel = np.array([[1, 2, 1], [2, 4, 2], [1, 2, 1]], dtype=np.float32) / 16.0
+        result_gpu = kc.conv_naive(input_arr, kernel)
+        result_cpu = conv_cpu(input_arr, kernel)
+        np.testing.assert_allclose(result_gpu, result_cpu, rtol=1e-5)
+
+    def test_7x7_kernel(self):
+        """Test with larger 7x7 kernel."""
+        import kernel_craft_python as kc
+        np.random.seed(42)
+        input_arr = np.random.rand(32, 32).astype(np.float32)
+        kernel = np.random.rand(7, 7).astype(np.float32)
+        result_gpu = kc.conv_naive(input_arr, kernel)
+        result_cpu = conv_cpu(input_arr, kernel)
+        np.testing.assert_allclose(result_gpu, result_cpu, rtol=1e-4)
+
+
+class TestNumpyTorchInterop:
+    """Tests for numpy <-> torch interoperability."""
+
+    def test_numpy_to_torch_and_back(self):
+        """Test round-trip between numpy and torch."""
+        try:
+            import torch
+            import kernel_craft_python as kc
+        except ImportError:
+            pytest.skip("PyTorch not installed")
+
+        np.random.seed(42)
+        input_np = np.random.rand(16, 16).astype(np.float32)
+        kernel_np = np.random.rand(3, 3).astype(np.float32)
+
+        input_torch = torch.from_numpy(input_np).cuda()
+        kernel_torch = torch.from_numpy(kernel_np).cuda()
+
+        result_torch = kc.conv_naive(input_torch, kernel_torch)
+
+        result_back = result_torch.cpu().numpy()
+        result_ref = conv_cpu(input_np, kernel_np)
+        np.testing.assert_allclose(result_back, result_ref, rtol=1e-4)
+
+    def test_inplace_not_required(self):
+        """Test that input tensor is not modified."""
+        try:
+            import torch
+            import kernel_craft_python as kc
+        except ImportError:
+            pytest.skip("PyTorch not installed")
+
+        np.random.seed(42)
+        input_np = np.random.rand(16, 16).astype(np.float32)
+        kernel_np = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=np.float32)
+
+        input_torch = torch.from_numpy(input_np).cuda()
+        input_original = input_torch.clone()
+
+        _ = kc.conv_naive(input_torch, torch.from_numpy(kernel_np).cuda())
+
+        np.testing.assert_allclose(input_torch.cpu().numpy(), input_original.cpu().numpy())
+
+    def test_different_tiled_results_torch(self):
+        """Test tiled matches naive for torch on various sizes."""
+        try:
+            import torch
+            import kernel_craft_python as kc
+        except ImportError:
+            pytest.skip("PyTorch not installed")
+
+        for size in [8, 16, 32, 64]:
+            np.random.seed(42)
+            input_arr = np.random.rand(size, size).astype(np.float32)
+            kernel = np.random.rand(3, 3).astype(np.float32)
+
+            naive_result = kc.conv_naive(
+                torch.from_numpy(input_arr).cuda(),
+                torch.from_numpy(kernel).cuda()
+            )
+            tiled_result = kc.conv_tiled(
+                torch.from_numpy(input_arr).cuda(),
+                torch.from_numpy(kernel).cuda(),
+                8, 8
+            )
+
+            np.testing.assert_allclose(
+                naive_result.cpu().numpy(),
+                tiled_result.cpu().numpy(),
+                rtol=1e-4
+            )
+
+
+class TestMemoryAndBatch:
+    """Memory and batch processing tests."""
+
+    def test_multiple_consecutive_calls(self):
+        """Test multiple consecutive kernel calls."""
+        import kernel_craft_python as kc
+
+        np.random.seed(42)
+        kernel = np.random.rand(3, 3).astype(np.float32)
+
+        results = []
+        for _ in range(5):
+            input_arr = np.random.rand(32, 32).astype(np.float32)
+            result = kc.conv_naive(input_arr, kernel)
+            results.append(result)
+
+        assert len(results) == 5
+        for r in results:
+            assert r.shape == (32, 32)
+
+    def test_reuse_kernel(self):
+        """Test reusing the same kernel multiple times."""
+        import kernel_craft_python as kc
+
+        np.random.seed(42)
+        kernel = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=np.float32)
+
+        for i in range(3):
+            input_arr = np.random.rand(16, 16).astype(np.float32)
+            result = kc.conv_tiled(input_arr, kernel, 8, 8)
+            result_ref = conv_cpu(input_arr, kernel)
+            np.testing.assert_allclose(result, result_ref, rtol=1e-4)
+
+    def test_batch_varying_sizes(self):
+        """Test batch with varying input sizes."""
+        import kernel_craft_python as kc
+
+        np.random.seed(42)
+        sizes = [(8, 8), (16, 16), (24, 24), (32, 32)]
+        kernel = np.random.rand(3, 3).astype(np.float32)
+
+        results = []
+        for h, w in sizes:
+            input_arr = np.random.rand(h, w).astype(np.float32)
+            result = kc.conv_tiled(input_arr, kernel, 8, 8)
+            results.append((result.shape, w == result.shape[1]))
+
+        for (shape, w_ok) in results:
+            assert w_ok, f"Width mismatch: {shape}"
+
+
+class TestLargeScale:
+    """Large scale tests."""
+
+    def test_1024x1024(self):
+        """Test with 1024x1024 image."""
+        import kernel_craft_python as kc
+
+        np.random.seed(42)
+        input_arr = np.random.rand(1024, 1024).astype(np.float32)
+        kernel = np.random.rand(3, 3).astype(np.float32)
+
+        result = kc.conv_tiled(input_arr, kernel, 8, 8)
+        assert result.shape == (1024, 1024)
+
+    def test_2048x2048(self):
+        """Test with 2048x2048 image."""
+        import kernel_craft_python as kc
+
+        np.random.seed(42)
+        input_arr = np.random.rand(2048, 2048).astype(np.float32)
+        kernel = np.random.rand(3, 3).astype(np.float32)
+
+        result = kc.conv_tiled(input_arr, kernel, 16, 16)
+        assert result.shape == (2048, 2048)
+
+    def test_4096x4096(self):
+        """Test with 4096x4096 image."""
+        import kernel_craft_python as kc
+
+        np.random.seed(42)
+        input_arr = np.random.rand(4096, 4096).astype(np.float32)
+        kernel = np.random.rand(3, 3).astype(np.float32)
+
+        result = kc.conv_tiled(input_arr, kernel, 32, 32)
+        assert result.shape == (4096, 4096)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

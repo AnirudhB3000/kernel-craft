@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+jobs:
+  build-test-publish:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Cache CUDA compute cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cuda/cache
+          key: ${{ runner.os }}-cuda-cache-${{ hashFiles('src/*.cu') }}
+          restore-keys: |
+            ${{ runner.os }}-cuda-cache-
+
+      - name: Install build dependencies
+        run: |
+          which cmake || sudo apt-get update && sudo apt-get install -y cmake make python3 python3-pip python3-venv git
+
+      - name: Set up Python
+        run: |
+          python3 -m venv /tmp/releasevenv
+          /tmp/releasevenv/bin/pip install numpy pytest build twine
+
+      - name: Build C++ code
+        env:
+          CUDA_CACHE_PATH: ~/.cuda/cache
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -DCMAKE_CUDA_ARCHITECTURES=75
+          make -j$(nproc)
+
+      - name: Run C++ tests
+        working-directory: build
+        run: ctest --output-on-failure
+
+      - name: Clear dist directory
+        working-directory: src/python
+        run: rm -rf dist/*
+
+      - name: Build Python module
+        working-directory: src/python
+        run: /tmp/releasevenv/bin/python -m build
+
+      - name: Run Python tests
+        working-directory: src/python
+        env:
+          PYTHONPATH: "$(pwd)/kernel_craft_python"
+        run: |
+          /tmp/releasevenv/bin/python -m pytest tests/ -v
+
+      - name: Update version
+        id: version
+        run: |
+          VERSION_TYPE="${{ github.event.inputs.version_type }}"
+          PYPROJECT="src/python/pyproject.toml"
+          OLD_VERSION=$(grep '^version = "' "$PYPROJECT" | sed 's/version = "//' | sed 's/"$//')
+          echo "Old version: $OLD_VERSION"
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$OLD_VERSION"
+
+          case "$VERSION_TYPE" in
+            patch)
+              NEW_PATCH=$((PATCH + 1))
+              NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+              ;;
+            minor)
+              NEW_MINOR=$((MINOR + 1))
+              NEW_VERSION="$MAJOR.$NEW_MINOR.0"
+              ;;
+            major)
+              NEW_MAJOR=$((MAJOR + 1))
+              NEW_VERSION="$NEW_MAJOR.0.0"
+              ;;
+          esac
+
+          echo "New version: $NEW_VERSION"
+          sed -i "s/version = \"$OLD_VERSION\"/version = \"$NEW_VERSION\"/" "$PYPROJECT"
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Rebuild Python module with new version
+        working-directory: src/python
+        run: rm -rf dist/* && /tmp/releasevenv/bin/python -m build
+
+      - name: Upload to TestPyPI
+        working-directory: src/python
+        run: twine upload --repository testpypi dist/*
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}

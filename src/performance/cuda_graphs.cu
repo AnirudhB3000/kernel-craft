@@ -129,6 +129,10 @@ extern "C" int conv_graph_launch(cudaStream_t stream = 0) {
     return (err == cudaSuccess) ? 0 : -1;
 }
 
+extern "C" void relu(float* d_data, int size) {
+    relu_nosync(d_data, size);
+}
+
 /**
  * \brief Execute pipeline with separate kernel launches.
  *

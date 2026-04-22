@@ -277,3 +277,19 @@ g_workCount = 0;
 extern "C" void conv_work_clear() {
     g_workCount = 0;
 }
+
+extern "C" void conv_streaming(const float* d_input,
+                                const float* d_kernel,
+                                float* d_output,
+                                int width, int height, int ksize,
+                                dim3 block,
+                                cudaStream_t stream) {
+    const int tileW = TILE_W;
+    const int tileH = TILE_H;
+    const int gridX = (width + tileW * block.x - 1) / (tileW * block.x);
+    const int gridY = (height + tileH * block.y - 1) / (tileH * block.y);
+    dim3 grid(gridX, gridY);
+    
+    conv_tiled_persistent<<<grid, block, 0, stream>>>(
+        d_input, d_kernel, d_output, width, height, ksize);
+}

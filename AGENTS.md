@@ -637,5 +637,56 @@ twine upload dist/*
 
 ---
 
+## 11. PyPI Release Workflow
+
+### Motivation
+
+Manual release workflow for PyPI distribution with configurable version bumps.
+
+### Workflow Design
+
+| Trigger | Input | Runner |
+|---------|-------|--------|
+| `workflow_dispatch` (manual) | patch / minor / major | self-hosted (GPU) |
+
+### Features
+
+- Clears old distributions from `src/python/dist/` before build
+- Builds and runs C++ tests (ctest)
+- Builds and runs Python tests (pytest)
+- Configurable version bump via workflow input
+- Auto-upload to TestPyPI after successful build
+
+### Usage
+
+```bash
+# Trigger via GitHub UI:
+# 1. Go to Actions → Release
+# 2. Select "Run workflow"
+# 3. Choose version type: patch/minor/major
+# 4. Click "Run workflow"
+```
+
+```bash
+# Or via GitHub CLI:
+gh workflow run release.yml -f version_type=patch
+```
+
+### Configuration
+
+Required secrets:
+- `TWINE_PASSWORD`: PyPI/TestPyPI API token
+
+### Publishing to Production PyPI
+
+After testing on TestPyPI, upload to production:
+
+```bash
+cd src/python
+twine upload dist/*
+```
+
+---
+
 End of AGENTS.md
 
