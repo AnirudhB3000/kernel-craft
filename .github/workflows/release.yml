@@ -13,7 +13,7 @@ on:
           - major
 
 jobs:
-  build-test-publish:
+  kernel-snake:
     runs-on: self-hosted
 
     steps:
@@ -110,7 +110,7 @@ jobs:
 
       - name: Upload to TestPyPI
         working-directory: src/python
-        run: twine upload --repository testpypi dist/*
+        run: /tmp/releasevenv/bin/twine upload --repository testpypi dist/*
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
