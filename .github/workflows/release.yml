@@ -47,35 +47,12 @@ jobs:
           python3 -m venv /tmp/releasevenv
           /tmp/releasevenv/bin/pip install numpy pytest build twine
 
-      - name: Build C++ code
-        env:
-          CUDA_CACHE_PATH: ~/.cuda/cache
+      - name: Set up Git config
         run: |
-          mkdir -p build
-          cd build
-          cmake .. -DCMAKE_CUDA_ARCHITECTURES=75
-          make -j$(nproc)
+          git config --local user.email "release@kernel-craft.ai"
+          git config --local user.name "Release Bot"
 
-      - name: Run C++ tests
-        working-directory: build
-        run: ctest --output-on-failure
-
-      - name: Clear dist directory
-        working-directory: src/python
-        run: rm -rf dist/*
-
-      - name: Build Python module
-        working-directory: src/python
-        run: /tmp/releasevenv/bin/python -m build
-
-      - name: Run Python tests
-        working-directory: src/python
-        env:
-          PYTHONPATH: "$(pwd)/kernel_craft_python"
-        run: |
-          /tmp/releasevenv/bin/python -m pytest tests/ -v
-
-      - name: Update version
+      - name: Increment and update version
         id: version
         run: |
           VERSION_TYPE="${{ github.event.inputs.version_type }}"
@@ -104,9 +81,39 @@ jobs:
           sed -i "s/version = \"$OLD_VERSION\"/version = \"$NEW_VERSION\"/" "$PYPROJECT"
           echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
-      - name: Rebuild Python module with new version
+      - name: Commit and push version bump
+        run: |
+          git add src/python/pyproject.toml
+          git commit -m "Bump version to ${{ steps.version.outputs.version }}"
+          git push
+
+      - name: Build C++ code
+        env:
+          CUDA_CACHE_PATH: ~/.cuda/cache
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -DCMAKE_CUDA_ARCHITECTURES=75
+          make -j$(nproc)
+
+      - name: Run C++ tests
+        working-directory: build
+        run: ctest --output-on-failure
+
+      - name: Clear dist directory
         working-directory: src/python
-        run: rm -rf dist/* && /tmp/releasevenv/bin/python -m build
+        run: rm -rf dist/*
+
+      - name: Build Python module
+        working-directory: src/python
+        run: /tmp/releasevenv/bin/python -m build
+
+      - name: Run Python tests
+        working-directory: src/python
+        env:
+          PYTHONPATH: "$(pwd)/kernel_craft_python"
+        run: |
+          /tmp/releasevenv/bin/python -m pytest tests/ -v
 
       - name: Upload to TestPyPI
         working-directory: src/python
@@ -114,3 +121,10 @@ jobs:
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.testpypi_token }}
+
+      - name: Upload to PyPI
+        working-directory: src/python
+        run: /tmp/releasevenv/bin/twine upload dist/*
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.pypi_token }}
