@@ -1,8 +1,8 @@
 # CLAUDE.md
 
-## Project: kernel-craft - CUDA for Machine Learning Training-Time Optimization
+## Project: kernel-craft - CUDA for Machine Learning Training & Inference-Time Optimization
 
-This document defines the goals, scope, and execution plan for developing deep expertise in GPU programming for ML training workloads, with a focus on CUDA-based training-time optimization.
+This document defines the goals, scope, and execution plan for developing deep expertise in GPU programming for ML training and inference workloads, with a focus on CUDA-based training and inference-time optimization (CNN-first for vision models).
 
 ---
 
@@ -470,6 +470,12 @@ Track:
 * Build full GPU pipeline
 * Optimize preprocessing
 * Run end-to-end benchmarks
+
+## Phase 10: ML Inference & TensorRT Support (CNN-First) (Week 9+)
+* Implement INT8 quantized convolution, BN folding, and conv+activation fusion for CNN inference
+* Build TensorRT plugin wrappers for custom CNN kernels
+* Document TensorRT integration workflows for vision model deployment
+* (Deferred) Transformer/LLM inference optimizations for vLLM integration
 
 ---
 

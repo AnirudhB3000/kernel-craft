@@ -100,3 +100,25 @@
 ---
 
 **Note:** Follow the methodology from `AGENTS.md`: change one variable at a time, compare against baselines, and document everything rigorously.
+
+---
+
+## Phase 10: ML Inference & TensorRT Support (CNN-First)
+### Goals
+- Add CNN-based inference optimizations (INT8 quantized convolution, Batch Normalization folding, conv+activation fusion)
+- Integrate custom CNN inference kernels as TensorRT plugins for vision model deployment
+- Document TensorRT integration workflows for production inference
+
+### Tasks
+- [ ] Implement INT8 quantized tiled convolution (`src/inference/quantization/int8_conv_tiled.cu`) building on existing `conv_tiled.cu` patterns
+- [ ] Implement Batch Normalization folding utility (`src/inference/fusion/bn_folding.cu`) for pre-engine weight optimization
+- [ ] Create TensorRT C++ plugin wrappers for custom CNN kernels (`src/inference/tensorrt/plugin_wrapper.cpp`)
+- [ ] Add Python helper scripts to export folded weights for TensorRT engine building
+- [ ] Add C++ and Python tests for all new inference components
+- [ ] Create TensorRT integration examples in `examples/tensorrt/`
+- [ ] (Deferred) vLLM/LLM inference integration for transformer models (Phase 11+)
+
+### Deliverables
+- `src/inference/` directory with quantization, fusion, and TensorRT plugin components
+- TensorRT plugin registration and example workflows
+- Updated benchmarks comparing custom inference kernels vs TensorRT baseline

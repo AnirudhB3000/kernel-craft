@@ -1,6 +1,6 @@
 # kernel-craft
 
-CUDA kernels for machine learning training-time optimization.
+CUDA kernels for machine learning training & inference-time optimization (CNN-first for vision models, extensible to LLMs).
 
 ## Features
 
@@ -170,3 +170,14 @@ result = kernel_craft.conv_tiled(input, kernel, tile_w=8, tile_h=8)
 - Fusing conv+batchnorm+relu saves ~40% memory bandwidth vs separate kernels
 - 8×8 tile provides best overall performance for 3×3 kernels
 - Memory movement dominates cost more than arithmetic
+
+## Inference Engine Integration
+kernel-craft's inference optimizations are designed to integrate with production inference engines:
+
+### TensorRT (Vision/CNN Models)
+- **Custom Plugins**: Wrap INT8 quantized convolution and BN folding logic as TensorRT `IPluginV3` plugins to add custom kernels to serialized TensorRT engines.
+- **Pre-Build Weight Folding**: Use the BN folding utility to pre-compute folded conv weights before TensorRT engine building, eliminating separate BN layers for inference.
+- See `examples/tensorrt/` for step-by-step integration demos.
+
+### vLLM (LLM Models, Deferred)
+Transformer-specific inference kernels (Flash Attention, LayerNorm, RMSNorm) will be added in future phases and integrated as vLLM custom PyTorch ops following [vLLM CustomOp guidelines](https://docs.vllm.ai/en/stable/design/custom_op/).
