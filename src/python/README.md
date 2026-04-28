@@ -1,6 +1,6 @@
 # kernel-craft Python API
 
-CUDA convolution kernels exposed to Python with numpy and PyTorch support.
+CUDA convolution kernels for ML training-time optimization, exposed to Python with numpy and PyTorch support.
 
 ## Installation
 

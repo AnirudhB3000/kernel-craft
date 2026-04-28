@@ -1,6 +1,6 @@
 # kernel-craft
 
-CUDA kernels for machine learning systems optimization.
+CUDA kernels for machine learning training-time optimization.
 
 ## Features
 
@@ -14,7 +14,7 @@ CUDA kernels for machine learning systems optimization.
 
 - **Fused Pipeline** (`src/pipeline_fused.cu`) - Conv + BatchNorm + ReLU in single kernel
 - **Separate Pipeline** (`src/pipeline_separate.cu`) - Individual pipeline kernels
-- **GPU Preprocessing** (`src/preprocess_gpu.cu`) - Resize, normalize, flip operations on GPU
+- **GPU Preprocessing** (`src/preprocess_gpu.cu`) - Resize, normalize, flip operations on GPU for training data pipelines
 
 ### Performance Optimization
 

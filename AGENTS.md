@@ -1,8 +1,8 @@
 # CLAUDE.md
 
-## Project: kernel-craft - CUDA for Machine Learning Systems Optimization
+## Project: kernel-craft - CUDA for Machine Learning Training-Time Optimization
 
-This document defines the goals, scope, and execution plan for developing deep expertise in GPU programming for ML workloads, with a focus on CUDA-based optimization.
+This document defines the goals, scope, and execution plan for developing deep expertise in GPU programming for ML training workloads, with a focus on CUDA-based training-time optimization.
 
 ---
 
@@ -347,7 +347,7 @@ Highly optimized libraries underperform on:
 
 ### Problem
 
-CPU preprocessing becomes bottleneck in ML pipelines.
+CPU preprocessing becomes bottleneck in ML training pipelines.
 
 ### Pipeline
 
@@ -358,12 +358,12 @@ CPU:
 - augment
 
 GPU:
-- model inference
+- training forward pass
 ```
 
 ### Goal
 
-Move entire pipeline to GPU.
+Move entire training data pipeline to GPU.
 
 ### Tasks
 
@@ -510,7 +510,7 @@ Focus is on:
 
 ## 9.1 Motivation
 
-Enable real-world use cases by exposing CUDA kernels to Python ML workflows.
+Enable real-world training workflows by exposing CUDA kernels to Python ML training pipelines.
 
 ## 9.2 Goals
 
