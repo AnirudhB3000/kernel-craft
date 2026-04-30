@@ -12,8 +12,8 @@ This document defines the goals, scope, and execution plan for developing deep e
 - When any logic is added or modified, corresponding tests must be added or updated.
 - Design decisions, whether high‑level architecture or low‑level implementation choices, must be documented in this CLAUDE.md file.
 - Updates to logic that affect interfaces or behavior require an entry in CLAUDE.md describing the change.
-- The naive convolution implementation (`src/conv_naive.cu`) is verified by `tests/test_conv_naive.cpp`.
-- The tiled convolution implementation (`src/conv_tiled.cu`) is verified by `tests/test_conv_tiled.cpp`.
+- The naive convolution implementation (`src/kernels/core/conv_naive.cu`) is verified by `tests/test_conv_naive.cpp`.
+- The tiled convolution implementation (`src/kernels/core/conv_tiled.cu`) is verified by `tests/test_conv_tiled.cpp`.
 
 ### Documentation Style
 
@@ -117,7 +117,7 @@ Example:
 
 ## Phase 6: Feature Extensions Results
 
-### 3D Convolution
+#### 3D Convolution
 
 | Volume Size | Kernel | Naive GPU (ms) | Tiled (ms) |
 |------------|--------|----------------|------------|
@@ -126,7 +126,7 @@ Example:
 
 **Key Insight**: 3D convolution scales cubically with volume dimensions; tiling provides modest gains due to shared memory constraints in 3D.
 
-### Dilated Convolution
+#### Dilated Convolution
 
 | Dilation Rate | Effective Receptive Field | Extra Overhead |
 |---------------|--------------------------|----------------|
@@ -137,7 +137,7 @@ Example:
 
 **Key Insight**: Dilated conv expands receptive field without additional parameters, but memory access pattern becomes less efficient.
 
-### Transposed Convolution
+#### Transposed Convolution
 
 | Input Size | Stride | Output Size | Notes |
 |------------|--------|-------------|-------|
@@ -147,7 +147,7 @@ Example:
 
 **Key Insight**: Transposed convolution upsamples by strided expansion; atomic additions ensure correct accumulation from multiple input pixels.
 
-### Grouped Convolution
+#### Grouped Convolution
 
 | Groups | Parameters | Memory | Notes |
 |--------|------------|--------|-------|
@@ -213,8 +213,8 @@ Develop a systems-level understanding of:
 
 ### Deliverables
 
-* `conv_naive.cu`
-* `conv_tiled.cu`
+* `kernels/core/conv_naive.cu`
+* `kernels/core/conv_tiled.cu`
 * Benchmark comparison
 
 ---
@@ -266,7 +266,7 @@ Standard libraries do not support all operations efficiently.
 
 ### Deliverables
 
-* `custom_op.cu`
+* `src/custom/custom_op.cu`
 * Performance report
 
 ---
@@ -306,88 +306,8 @@ single CUDA kernel performing all steps
 Memory movement dominates cost more than arithmetic.
 
 ### Deliverables
-
-* `pipeline_separate.cu`
-* `pipeline_fused.cu`
-* Benchmark report
-
----
-
-## 2.5 Small / Irregular Workloads
-
-### Motivation
-
-Highly optimized libraries underperform on:
-
-* Small tensors
-* Irregular shapes
-* Non-uniform workloads
-
-### Tasks
-
-* Benchmark small tensor convolutions
-* Design kernel optimized for:
-
-  * Low overhead
-  * Minimal launch latency
-
-### Experiments
-
-* Vary tensor sizes
-* Vary batch sizes
-
-### Deliverables
-
-* `small_conv_opt.cu`
-* Benchmark comparison
-
----
-
-## 2.6 End-to-End Pipeline Optimization
-
-### Problem
-
-CPU preprocessing becomes bottleneck in ML training pipelines.
-
-### Pipeline
-
-```
-CPU:
-- resize
-- normalize
-- augment
-
-GPU:
-- training forward pass
-```
-
-### Goal
-
-Move entire training data pipeline to GPU.
-
-### Tasks
-
-1. Implement GPU kernels for:
-
-   * Resize (bilinear interpolation)
-   * Normalization
-   * Simple augmentation (flip, crop)
-
-2. Build pipeline:
-
-```
-input -> GPU preprocess -> GPU conv -> output
-```
-
-3. Compare:
-
-   * CPU + GPU hybrid
-   * Full GPU pipeline
-
-### Deliverables
-
-* `preprocess_gpu.cu`
-* `pipeline_full_gpu.cu`
+* `src/pipelines/preprocess_gpu.cu`
+* `src/pipelines/pipeline_full_gpu.cu`
 * Throughput analysis
 
 ---
@@ -421,23 +341,50 @@ Track:
 ```
 /project-root
   /src
-    conv_naive.cu
-    conv_tiled.cu
-    custom_op.cu
-    pipeline_fused.cu
-    preprocess_gpu.cu
+    /kernels
+      /core
+        conv_naive.cu        # Baseline 2D convolution
+        conv_tiled.cu        # Tiled 2D convolution
+      /variants
+        conv3d.cu           # 3D convolution
+        conv_dilated.cu     # Dilated convolution
+        conv_transposed.cu  # Transposed convolution
+        conv_grouped.cu     # Grouped convolution
+      /inference
+        conv_int8.cu        # INT8 quantized convolution
+        bn_folding.cu       # BatchNorm folding
+        conv_activation_fusion.cu  # Fused conv+activation
+    /pipelines
+      pipeline_fused.cu     # Fused conv+batchnorm+relu
+      pipeline_separate.cu   # Separate pipeline kernels
+      preprocess_gpu.cu     # GPU preprocessing
+    /performance
+      memory_pool.cu        # Pre-allocated memory pool
+      cuda_graphs.cu        # CUDA Graphs integration
+      mixed_precision.cu    # FP16/TF32 kernels
+      persistent_kernels.cu # Persistent kernel mode
+    /custom
+      custom_op.cu          # Sparse convolution
+    /tensorrt
+      plugin_wrapper.cpp    # TensorRT plugin wrappers
+    /python
+      pybind_cuda.cpp       # Python bindings (pybind11)
+      pyproject.toml        # Package configuration
+      tests/                # Python tests
 
   /benchmarks
     benchmark_conv.cpp
     benchmark_pipeline.cpp
 
-  /reports
-    conv_analysis.md
-    fusion_analysis.md
-    pipeline_analysis.md
+  /tests
+    test_conv_naive.cpp
+    test_conv_tiled.cpp
+
+  /examples
+    /cpp
+    /python
 
   /data
-    sample_images/
 
   CMakeLists.txt
   README.md
@@ -472,8 +419,10 @@ Track:
 * Run end-to-end benchmarks
 
 ## Phase 10: ML Inference & TensorRT Support (CNN-First) (Week 9+)
-* Implement INT8 quantized convolution, BN folding, and conv+activation fusion for CNN inference
-* Build TensorRT plugin wrappers for custom CNN kernels
+* **INT8 Quantized Convolution** (`src/kernels/inference/conv_int8.cu`) - Low-precision inference kernels
+* **BatchNorm Folding** (`src/kernels/inference/bn_folding.cu`) - Pre-compute folded conv weights
+* **Conv+Activation Fusion** (`src/kernels/inference/conv_activation_fusion.cu`) - Fused conv and activation
+* **TensorRT Plugin Wrappers** (`src/tensorrt/plugin_wrapper.cpp`) - Custom TensorRT plugins for CNN inference
 * Document TensorRT integration workflows for vision model deployment
 * (Deferred) Transformer/LLM inference optimizations for vLLM integration
 
@@ -550,7 +499,7 @@ Add pybind11 FetchContent and Python extension target:
 include(FetchContent)
 FetchContent_Declare(pybind11 GIT_REPOSITORY https://github.com/pybind/pybind11.git GIT_TAG v2.11.1)
 FetchContent_MakeAvailable(pybind11)
-pybind11_add_module(kernel_craft src/pybind_cuda.cpp src/conv_naive.cu src/conv_tiled.cu)
+pybind11_add_module(kernel_craft src/python/pybind_cuda.cpp src/kernels/core/conv_naive.cu src/kernels/core/conv_tiled.cu)
 ```
 
 ### Task 2: Create src/pybind_cuda.cpp

@@ -173,17 +173,15 @@ target_link_libraries(test_conv_activation_fusion PRIVATE kernels)
 add_executable(test_tensorrt_integration tests/test_tensorrt_integration.cpp)
 target_link_libraries(test_tensorrt_integration PRIVATE kernels)
 
-# Test executable for TensorRT plugin
-add_executable(test_tensorrt_plugin tests/test_tensorrt_plugin.cpp
-    src/tensorrt/plugin_wrapper.cpp
-    src/kernels/inference/conv_int8.cu
-    src/kernels/inference/conv_activation_fusion.cu)
+# Test executable for TensorRT plugin (only if TensorRT is available)
 if(HAVE_TENSORRT)
+    add_executable(test_tensorrt_plugin tests/test_tensorrt_plugin.cpp
+        src/tensorrt/plugin_wrapper.cpp
+        src/kernels/inference/conv_int8.cu
+        src/kernels/inference/conv_activation_fusion.cu)
     target_include_directories(test_tensorrt_plugin PRIVATE ${TENSORRT_INCLUDE_DIR})
     target_link_libraries(test_tensorrt_plugin PRIVATE ${TENSORRT_ROOT}/lib/libnvinfer.so CUDA::cudart)
     target_compile_definitions(test_tensorrt_plugin PRIVATE HAVE_TENSORRT)
-else()
-    target_link_libraries(test_tensorrt_plugin PRIVATE kernels)
 endif()
 
 # Benchmark executable for convolution
@@ -278,17 +276,15 @@ target_link_libraries(example_preprocess PRIVATE kernels)
 add_executable(example_fused_pipeline examples/example_fused_pipeline.cpp)
 target_link_libraries(example_fused_pipeline PRIVATE kernels)
 
-# TensorRT example (optional)
-add_executable(example_tensorrt_usage examples/tensorrt/example_plugin_usage.cpp
-    src/tensorrt/plugin_wrapper.cpp
-    src/kernels/inference/conv_int8.cu
-    src/kernels/inference/conv_activation_fusion.cu)
+# TensorRT example (optional, only if TensorRT is available)
 if(HAVE_TENSORRT)
+    add_executable(example_tensorrt_usage examples/tensorrt/example_plugin_usage.cpp
+        src/tensorrt/plugin_wrapper.cpp
+        src/kernels/inference/conv_int8.cu
+        src/kernels/inference/conv_activation_fusion.cu)
     target_include_directories(example_tensorrt_usage PRIVATE ${TENSORRT_INCLUDE_DIR})
     target_link_libraries(example_tensorrt_usage PRIVATE ${TENSORRT_ROOT}/lib/libnvinfer.so CUDA::cudart)
     target_compile_definitions(example_tensorrt_usage PRIVATE HAVE_TENSORRT)
-else()
-    target_link_libraries(example_tensorrt_usage PRIVATE kernels)
 endif()
 
 # Target to build and run all examples (use: make examples)

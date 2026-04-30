@@ -6,15 +6,28 @@ CUDA kernels for machine learning training & inference-time optimization (CNN-fi
 
 ### Core Convolution Kernels
 
-- **Naive Convolution** (`src/conv_naive.cu`) - Baseline 2D convolution with one thread per output pixel
-- **Tiled Convolution** (`src/conv_tiled.cu`) - Optimized using shared memory tiling for better memory bandwidth
-- **Sparse Convolution** (`src/custom_op.cu`) - Coordinate-list format for sparse inputs
+- **Naive Convolution** (`src/kernels/core/conv_naive.cu`) - Baseline 2D convolution with one thread per output pixel
+- **Tiled Convolution** (`src/kernels/core/conv_tiled.cu`) - Optimized using shared memory tiling for better memory bandwidth
+
+### Convolution Variants
+
+- **3D Convolution** (`src/kernels/variants/conv3d.cu`) - Volumetric convolution for 3D data
+- **Dilated Convolution** (`src/kernels/variants/conv_dilated.cu`) - Expanded receptive field without parameter increase
+- **Transposed Convolution** (`src/kernels/variants/conv_transposed.cu`) - Upsampling via strided expansion
+- **Grouped Convolution** (`src/kernels/variants/conv_grouped.cu`) - Channel-grouped convolutions (ResNeXt-style)
+- **Sparse Convolution** (`src/custom/custom_op.cu`) - Coordinate-list format for sparse inputs
+
+### Inference-Optimized Kernels
+
+- **INT8 Quantized Convolution** (`src/kernels/inference/conv_int8.cu`) - Low-precision inference kernels
+- **BatchNorm Folding** (`src/kernels/inference/bn_folding.cu`) - Pre-compute folded conv weights for inference
+- **Conv+Activation Fusion** (`src/kernels/inference/conv_activation_fusion.cu`) - Fused conv and activation for inference
 
 ### Pipeline Kernels
 
-- **Fused Pipeline** (`src/pipeline_fused.cu`) - Conv + BatchNorm + ReLU in single kernel
-- **Separate Pipeline** (`src/pipeline_separate.cu`) - Individual pipeline kernels
-- **GPU Preprocessing** (`src/preprocess_gpu.cu`) - Resize, normalize, flip operations on GPU for training data pipelines
+- **Fused Pipeline** (`src/pipelines/pipeline_fused.cu`) - Conv + BatchNorm + ReLU in single kernel
+- **Separate Pipeline** (`src/pipelines/pipeline_separate.cu`) - Individual pipeline kernels
+- **GPU Preprocessing** (`src/pipelines/preprocess_gpu.cu`) - Resize, normalize, flip operations on GPU for training data pipelines
 
 ### Performance Optimization
 
@@ -22,6 +35,10 @@ CUDA kernels for machine learning training & inference-time optimization (CNN-fi
 - **CUDA Graphs** (`src/performance/cuda_graphs.cu`) - Captured kernel DAG for reduced launch overhead
 - **Mixed Precision** (`src/performance/mixed_precision.cu`) - FP16/TF32 kernels for Tensor Cores
 - **Persistent Kernels** (`src/performance/persistent_kernels.cu`) - Kernel reuse across batches
+
+### TensorRT Integration
+
+- **Plugin Wrappers** (`src/tensorrt/plugin_wrapper.cpp`) - Custom TensorRT plugins for CNN inference
 
 ### Python Bindings
 
@@ -33,22 +50,37 @@ CUDA kernels for machine learning training & inference-time optimization (CNN-fi
 
 ```
 kernel-craft/
-├── src/                     # CUDA kernel implementations
-│   ├── conv_naive.cu        # Naive 2D convolution
-│   ├── conv_tiled.cu        # Tiled 2D convolution
-│   ├── custom_op.cu         # Sparse convolution
-│   ├── pipeline_fused.cu    # Fused conv+batchnorm+relu
-│   ├── pipeline_separate.cu  # Separate pipeline kernels
-│   ├── preprocess_gpu.cu    # GPU preprocessing
-│   ├── performance/        # Performance optimization modules
-│   │   ├── memory_pool.cu     # Pre-allocated memory pool
-│   │   ├── cuda_graphs.cu      # CUDA Graphs integration
-│   │   ├── mixed_precision.cu  # FP16/TF32 kernels
-│   │   └── persistent_kernels.cu  # Persistent kernel mode
-│   └── python/
-│       ├── pybind_cuda.cpp   # Python bindings (pybind11)
-│       ├── pyproject.toml  # Package configuration
-│       └── tests/          # Python tests
+├── src/
+│   ├── kernels/
+│   │   ├── core/             # Core convolution kernels
+│   │   │   ├── conv_naive.cu
+│   │   │   └── conv_tiled.cu
+│   │   ├── variants/        # Convolution variants
+│   │   │   ├── conv3d.cu
+│   │   │   ├── conv_dilated.cu
+│   │   │   ├── conv_transposed.cu
+│   │   │   └── conv_grouped.cu
+│   │   └── inference/       # Inference-optimized kernels
+│   │       ├── conv_int8.cu
+│   │       ├── bn_folding.cu
+│   │       └── conv_activation_fusion.cu
+│   ├── pipelines/           # Pipeline kernels
+│   │   ├── pipeline_fused.cu
+│   │   ├── pipeline_separate.cu
+│   │   └── preprocess_gpu.cu
+│   ├── performance/         # Performance optimization modules
+│   │   ├── memory_pool.cu
+│   │   ├── cuda_graphs.cu
+│   │   ├── mixed_precision.cu
+│   │   └── persistent_kernels.cu
+│   ├── custom/              # Custom operations
+│   │   └── custom_op.cu
+│   ├── tensorrt/            # TensorRT integration
+│   │   └── plugin_wrapper.cpp
+│   └── python/              # Python bindings
+│       ├── pybind_cuda.cpp
+│       ├── pyproject.toml
+│       └── tests/
 ├── benchmarks/              # Benchmark programs
 ├── tests/                  # C++ unit tests
 ├── examples/
@@ -144,7 +176,7 @@ result = kernel_craft.conv_tiled(input, kernel, tile_w=8, tile_h=8)
 | Kernel | Image Size | Time (ms) | Notes |
 |--------|------------|-----------|---------|
 | Naive | 256×256 | ~0.45 | Baseline |
-| Tiled 8×8 | 256×2 | ~0.36 | Best for small images |
+| Tiled 8×8 | 256×256 | ~0.36 | Best for small images |
 | Tiled 16×16 | 1024×1024 | ~0.60 | Balanced |
 | Tiled 32×32 | 2048×2048 | ~1.39 | Best for large images |
 
