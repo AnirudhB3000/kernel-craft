@@ -41,6 +41,21 @@ list(REMOVE_ITEM CUDA_SOURCES ${CUDA_SOURCES_EXCLUDE})
 # Link CUDA libraries if needed
 find_package(CUDAToolkit REQUIRED)
 
+# TensorRT support (optional)
+if(DEFINED TENSORRT_ROOT)
+    set(TensorRT_INCLUDE_DIR ${TENSORRT_ROOT}/include)
+    set(TensorRT_LIBRARY_DIR ${TENSORRT_ROOT}/lib)
+    if(EXISTS ${TensorRT_INCLUDE_DIR}/NvInfer.h)
+        message(STATUS "Found TensorRT at ${TENSORRT_ROOT}")
+        include_directories(${TensorRT_INCLUDE_DIR})
+        link_directories(${TensorRT_LIBRARY_DIR})
+        add_compile_definitions(HAVE_TENSORRT)
+        set(HAVE_TENSORRT TRUE)
+    else()
+        message(WARNING "TensorRT headers not found at ${TensorRT_INCLUDE_DIR}")
+    endif()
+endif()
+
 # ------------------------------------------------------------
 # pybind11 Python bindings (auto-downloaded via FetchContent)
 # ------------------------------------------------------------
@@ -64,6 +79,19 @@ set_target_properties(kernel_craft_python PROPERTIES
 add_library(kernels SHARED ${CUDA_SOURCES})
 target_link_libraries(kernels PUBLIC CUDA::cudart)
 target_include_directories(kernels PUBLIC ${CMAKE_SOURCE_DIR}/src)
+
+# TensorRT plugin library (optional, requires TensorRT SDK)
+if(HAVE_TENSORRT)
+    add_library(kernel_craft_tensorrt SHARED
+        src/tensorrt/plugin_wrapper.cpp
+        src/kernels/inference/conv_int8.cu
+        src/kernels/inference/conv_activation_fusion.cu
+    )
+    target_include_directories(kernel_craft_tensorrt PRIVATE ${TensorRT_INCLUDE_DIR})
+    target_link_libraries(kernel_craft_tensorrt PRIVATE ${TensorRT_LIBRARY_DIR}/libnvinfer.so CUDA::cudart)
+    target_compile_definitions(kernel_craft_tensorrt PRIVATE HAVE_TENSORRT)
+    message(STATUS "TensorRT plugin library target created")
+endif()
 
 # Default tile size for tiled convolution (8x8 provides best overall performance)
 set(TILE_SIZE_W 8)
@@ -129,6 +157,35 @@ target_link_libraries(test_mixed_precision PRIVATE kernels)
 add_executable(test_persistent_kernels tests/test_persistent_kernels.cpp)
 target_link_libraries(test_persistent_kernels PRIVATE kernels)
 
+# Test executable for INT8 quantized convolution
+add_executable(test_conv_int8 tests/test_conv_int8.cpp)
+target_link_libraries(test_conv_int8 PRIVATE kernels)
+
+# Test executable for batch normalization folding
+add_executable(test_bn_folding tests/test_bn_folding.cpp)
+target_link_libraries(test_bn_folding PRIVATE kernels)
+
+# Test executable for conv + activation fusion
+add_executable(test_conv_activation_fusion tests/test_conv_activation_fusion.cpp)
+target_link_libraries(test_conv_activation_fusion PRIVATE kernels)
+
+# Test executable for TensorRT integration
+add_executable(test_tensorrt_integration tests/test_tensorrt_integration.cpp)
+target_link_libraries(test_tensorrt_integration PRIVATE kernels)
+
+# Test executable for TensorRT plugin
+add_executable(test_tensorrt_plugin tests/test_tensorrt_plugin.cpp
+    src/tensorrt/plugin_wrapper.cpp
+    src/kernels/inference/conv_int8.cu
+    src/kernels/inference/conv_activation_fusion.cu)
+if(HAVE_TENSORRT)
+    target_include_directories(test_tensorrt_plugin PRIVATE ${TENSORRT_INCLUDE_DIR})
+    target_link_libraries(test_tensorrt_plugin PRIVATE ${TENSORRT_ROOT}/lib/libnvinfer.so CUDA::cudart)
+    target_compile_definitions(test_tensorrt_plugin PRIVATE HAVE_TENSORRT)
+else()
+    target_link_libraries(test_tensorrt_plugin PRIVATE kernels)
+endif()
+
 # Benchmark executable for convolution
 add_executable(benchmark_conv benchmarks/benchmark_conv.cpp)
 target_link_libraries(benchmark_conv PRIVATE kernels)
@@ -179,6 +236,10 @@ add_test(NAME memory_pool_test COMMAND test_memory_pool)
 add_test(NAME cuda_graphs_test COMMAND test_cuda_graphs)
 add_test(NAME mixed_precision_test COMMAND test_mixed_precision)
 add_test(NAME persistent_kernels_test COMMAND test_persistent_kernels)
+add_test(NAME conv_int8_test COMMAND test_conv_int8)
+add_test(NAME bn_folding_test COMMAND test_bn_folding)
+add_test(NAME conv_activation_fusion_test COMMAND test_conv_activation_fusion)
+add_test(NAME tensorrt_integration_test COMMAND test_tensorrt_integration)
 
 # Register all benchmarks as tests
 add_test(NAME benchmark_conv COMMAND benchmark_conv)
@@ -193,7 +254,7 @@ add_test(NAME benchmark_persistent_kernels COMMAND benchmark_persistent_kernels)
 # Convenience target that runs all registered tests and shows a concise summary
 add_custom_target(run_tests
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-    DEPENDS test_conv_naive test_conv_tiled test_preprocess test_pipeline test_custom_op test_memory_pool test_cuda_graphs test_mixed_precision test_persistent_kernels
+    DEPENDS test_conv_naive test_conv_tiled test_preprocess test_pipeline test_custom_op test_memory_pool test_cuda_graphs test_mixed_precision test_persistent_kernels test_conv_int8 test_bn_folding test_conv_activation_fusion
     COMMENT "Running all unit tests via CTest"
 )
 
@@ -216,6 +277,19 @@ target_link_libraries(example_preprocess PRIVATE kernels)
 
 add_executable(example_fused_pipeline examples/example_fused_pipeline.cpp)
 target_link_libraries(example_fused_pipeline PRIVATE kernels)
+
+# TensorRT example (optional)
+add_executable(example_tensorrt_usage examples/tensorrt/example_plugin_usage.cpp
+    src/tensorrt/plugin_wrapper.cpp
+    src/kernels/inference/conv_int8.cu
+    src/kernels/inference/conv_activation_fusion.cu)
+if(HAVE_TENSORRT)
+    target_include_directories(example_tensorrt_usage PRIVATE ${TENSORRT_INCLUDE_DIR})
+    target_link_libraries(example_tensorrt_usage PRIVATE ${TENSORRT_ROOT}/lib/libnvinfer.so CUDA::cudart)
+    target_compile_definitions(example_tensorrt_usage PRIVATE HAVE_TENSORRT)
+else()
+    target_link_libraries(example_tensorrt_usage PRIVATE kernels)
+endif()
 
 # Target to build and run all examples (use: make examples)
 add_custom_target(examples

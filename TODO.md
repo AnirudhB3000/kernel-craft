@@ -1,16 +1,65 @@
 # TODO List for kernel-craft
 
+## Phase 10: ML Inference & TensorRT Support (CNN-First) - MOSTLY COMPLETE ✅
 
-## Phase 4: End‑to‑End GPU Pipeline (Weeks 7‑8)
-- [ ] **Profile complete pipeline**
+### Completed ✅
+- [x] **INT8 quantized convolution kernel** (`src/kernels/inference/conv_int8.cu`)
+  - Naive and tiled implementations
+  - Quantization/dequantization helpers
+  - Scale factor computation
+  - Tests: `tests/test_conv_int8.cpp`
+
+- [x] **Batch normalization folding** (`src/kernels/inference/bn_folding.cu`)
+  - Fold BN parameters into conv weights/bias
+  - CPU reference implementation for verification
+  - Tests: `tests/test_bn_folding.cpp`
+
+- [x] **Conv + activation fusion** (`src/kernels/inference/conv_activation_fusion.cu`)
+  - Fused conv+ReLU (naive and tiled)
+  - Fused conv+LeakyReLU
+  - Fused conv+Sigmoid
+  - Tests: `tests/test_conv_activation_fusion.cpp`
+
+- [x] **TensorRT plugin wrappers** (`src/tensorrt/`)
+  - Plugin interface header (`plugin_wrapper.h`)
+  - Plugin implementation (`plugin_wrapper.cpp`)
+  - ConvInt8Plugin and ConvReluPlugin
+  - Plugin creator classes
+
+- [x] **TensorRT integration documentation** (`docs/tensorrt_integration.md`)
+  - Build instructions
+  - Usage examples
+  - Deployment pipeline
+  - Performance considerations
+
+### Remaining Tasks
+- [ ] Add Python helper scripts to export folded weights for TensorRT engine building
+- [ ] Add C++ and Python tests for all new inference components (currently have C++ tests)
+- [ ] Create TensorRT integration examples in `examples/tensorrt/`
+
+### Deferred ⏸️
+- [ ] **Transformer/LLM inference optimizations for vLLM integration**
+  - Attention kernel optimization
+  - KV-cache management
+  - PagedAttention implementation
+  - Continuous batching support
+
+---
+
+## Phase 4: End‑to‑End GPU Pipeline (Weeks 7‑8) - COMPLETE ✅
+- [x] **Profile complete pipeline**
   - Use Nsight Systems to visualize data movement and kernel overlaps.
 
-## Phase 5: Python Integration (Weeks 9‑10)
+---
+
+## Phase 5: Python Integration (Weeks 9‑10) - COMPLETE ✅
 - [x] **Create PyPI release workflow**
   - GitHub Actions workflow to build and publish
   - Support TestPyPI and PyPI deployments
 
-## Phase 6: Feature Extensions
+---
+
+## Phase 6: Feature Extensions - COMPLETE ✅
 
 - [x] **3D Convolution**
   - Implement volumetric convolution kernel for 3D input tensors (D×H×W)
@@ -34,7 +83,7 @@
 
 ---
 
-## Phase 7: Performance Infrastructure
+## Phase 7: Performance Infrastructure - COMPLETE ✅
 
 - [x] **CUDA Graphs Integration**
   - Wrap pipeline kernels in CUDA graphs
@@ -61,7 +110,7 @@
 
 ---
 
-## Phase 8: Integration Enhancements
+## Phase 8: Integration Enhancements - PENDING
 
 - [ ] **Async Stream Operations**
   - Implement stream-based async execution
@@ -80,45 +129,44 @@
 
 ---
 
-## Phase 9: Additional Framework Support (Optional)
+## Phase 9: Additional Framework Support (Optional) - PENDING
 
-**Option 1**: Add JAX support
+**Option1**: Add JAX support
 - [ ] Research JAX array interop with pybind11
 - [ ] Add `conv_naive_jax()` and `conv_tiled_jax()` overloads
 - [ ] Test with JAX arrays on GPU
 
-**Option 2**: Add ONNX Runtime support
+**Option2**: Add ONNX Runtime support
 - [ ] Create ONNX execution provider custom kernel
 - [ ] Integrate with ONNX Runtime CUDA EP
 - [ ] Benchmark vs native implementation
 
-**Option 3**: Add TensorFlow support
+**Option3**: Add TensorFlow support
 - [ ] Add TensorFlow tensor overloads
 - [ ] Use TF's memory management for GPU tensors
 - [ ] Test with TF Keras models
 
 ---
 
-**Note:** Follow the methodology from `AGENTS.md`: change one variable at a time, compare against baselines, and document everything rigorously.
+## Directory Structure (After Reorganization)
+
+```
+src/
+├── kernels/
+│   ├── core/            # Core convolution implementations
+│   │   ├── conv_naive.cu
+│   │   └── conv_tiled.cu
+│   ├── variants/        # Specialized convolution variants
+│   │   ├── conv_grouped.cu
+│   │   ├── conv_transposed.cu
+│   │   ├── conv_dilated.cu
+│   │   └── conv3d.cu
+│   └── inference/       # Inference optimization kernels
+│       ├── conv_int8.cu
+│       ├── bn_folding.cu
+│       └── conv_activation_fusion.cu
+```
 
 ---
 
-## Phase 10: ML Inference & TensorRT Support (CNN-First)
-### Goals
-- Add CNN-based inference optimizations (INT8 quantized convolution, Batch Normalization folding, conv+activation fusion)
-- Integrate custom CNN inference kernels as TensorRT plugins for vision model deployment
-- Document TensorRT integration workflows for production inference
-
-### Tasks
-- [ ] Implement INT8 quantized tiled convolution (`src/inference/quantization/int8_conv_tiled.cu`) building on existing `conv_tiled.cu` patterns
-- [ ] Implement Batch Normalization folding utility (`src/inference/fusion/bn_folding.cu`) for pre-engine weight optimization
-- [ ] Create TensorRT C++ plugin wrappers for custom CNN kernels (`src/inference/tensorrt/plugin_wrapper.cpp`)
-- [ ] Add Python helper scripts to export folded weights for TensorRT engine building
-- [ ] Add C++ and Python tests for all new inference components
-- [ ] Create TensorRT integration examples in `examples/tensorrt/`
-- [ ] (Deferred) vLLM/LLM inference integration for transformer models (Phase 11+)
-
-### Deliverables
-- `src/inference/` directory with quantization, fusion, and TensorRT plugin components
-- TensorRT plugin registration and example workflows
-- Updated benchmarks comparing custom inference kernels vs TensorRT baseline
+**Note:** Follow the methodology from `AGENTS.md`: change one variable at a time, compare against baselines, and document everything rigorously.
