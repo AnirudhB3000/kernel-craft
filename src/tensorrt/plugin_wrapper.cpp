@@ -30,21 +30,41 @@ namespace tensorrt {
 // ---------------------------------------------------------------------------
 
 KernelCraftBasePlugin::KernelCraftBasePlugin(const std::string& name,
-                                              int kernelSize,
-                                              int inputChannels,
-                                              int outputChannels)
+                                               int kernelSize,
+                                               int inputChannels,
+                                               int outputChannels)
     : mName(name)
     , mDataType(nvinfer1::DataType::kFLOAT)
     , mFormat(nvinfer1::PluginFormat::kLINEAR)
     , mKernelSize(kernelSize)
     , mInputChannels(inputChannels)
-    , mOutputChannels(outputChannels) {}
+    , mOutputChannels(outputChannels)
+    , mDeviceKernel(nullptr)
+    , mKernelSizeBytes(0) {}
 
 KernelCraftBasePlugin::KernelCraftBasePlugin(const void* data, size_t length) {
     const char* d = static_cast<const char*>(data);
     mKernelSize = *reinterpret_cast<const int32_t*>(d); d += sizeof(int32_t);
     mInputChannels = *reinterpret_cast<const int32_t*>(d); d += sizeof(int32_t);
-    mOutputChannels = *reinterpret_cast<const int32_t*>(d);
+    mOutputChannels = *reinterpret_cast<const int32_t*>(d); d += sizeof(int32_t);
+    mKernelSizeBytes = *reinterpret_cast<const size_t*>(d); d += sizeof(size_t);
+    // Note: kernel data would follow in real implementation
+    mDeviceKernel = nullptr;
+}
+
+KernelCraftBasePlugin::~KernelCraftBasePlugin() {
+    if (mDeviceKernel) {
+        cudaFree(mDeviceKernel);
+    }
+}
+
+void KernelCraftBasePlugin::setKernelWeights(const float* hostKernel, size_t kernelBytes) {
+    if (mDeviceKernel) {
+        cudaFree(mDeviceKernel);
+    }
+    mKernelSizeBytes = kernelBytes;
+    cudaMalloc(&mDeviceKernel, kernelBytes);
+    cudaMemcpy(mDeviceKernel, hostKernel, kernelBytes, cudaMemcpyHostToDevice);
 }
 
 const char* KernelCraftBasePlugin::getPluginVersion() const noexcept {
@@ -151,11 +171,11 @@ void ConvInt8Plugin::serialize(void* buffer) const noexcept {
 }
 
 int32_t ConvInt8Plugin::enqueue(const nvinfer1::PluginTensorDesc* inputDesc,
-                                 const nvinfer1::PluginTensorDesc* outputDesc,
-                                 const void* const* inputs,
-                                 void* const* outputs,
-                                 void* workspace,
-                                 cudaStream_t stream) noexcept {
+                                  const nvinfer1::PluginTensorDesc* outputDesc,
+                                  const void* const* inputs,
+                                  void* const* outputs,
+                                  void* workspace,
+                                  cudaStream_t stream) noexcept {
     const auto& dims = inputDesc[0].dims;
     int height = dims.d[2];
     int width = dims.d[3];
@@ -164,7 +184,7 @@ int32_t ConvInt8Plugin::enqueue(const nvinfer1::PluginTensorDesc* inputDesc,
     float* d_output = static_cast<float*>(outputs[0]);
 
     dim3 block(16, 16);
-    launch_conv_int8_tiled(d_input, nullptr, d_output,
+    launch_conv_int8_tiled(d_input, mDeviceKernel, d_output,
                            width, height, mKernelSize,
                            mInputScale, mKernelScale, mOutputScale, block);
 
@@ -206,11 +226,11 @@ void ConvReluPlugin::serialize(void* buffer) const noexcept {
 }
 
 int32_t ConvReluPlugin::enqueue(const nvinfer1::PluginTensorDesc* inputDesc,
-                                 const nvinfer1::PluginTensorDesc* outputDesc,
-                                 const void* const* inputs,
-                                 void* const* outputs,
-                                 void* workspace,
-                                 cudaStream_t stream) noexcept {
+                                  const nvinfer1::PluginTensorDesc* outputDesc,
+                                  const void* const* inputs,
+                                  void* const* outputs,
+                                  void* workspace,
+                                  cudaStream_t stream) noexcept {
     const auto& dims = inputDesc[0].dims;
     int height = dims.d[2];
     int width = dims.d[3];
@@ -219,8 +239,8 @@ int32_t ConvReluPlugin::enqueue(const nvinfer1::PluginTensorDesc* inputDesc,
     float* d_output = static_cast<float*>(outputs[0]);
 
     dim3 block(16, 16);
-    launch_conv_relu_tiled(d_input, nullptr, d_output,
-                            width, height, mKernelSize, block);
+    launch_conv_relu_tiled(d_input, mDeviceKernel, d_output,
+                             width, height, mKernelSize, block);
 
     return 0;
 }
@@ -275,8 +295,56 @@ const char* ConvInt8PluginCreator::getPluginNamespace() const noexcept {
 } // namespace tensorrt
 } // namespace kernel_craft
 
-// Register plugin
+// Register plugins
 extern "C" void __attribute__((constructor)) registerConvInt8Plugin() {
     static nvinfer1::PluginRegistrar<kernel_craft::tensorrt::ConvInt8PluginCreator> registrar;
     (void)registrar;
+}
+
+extern "C" void __attribute__((constructor)) registerConvReluPlugin() {
+    static nvinfer1::PluginRegistrar<kernel_craft::tensorrt::ConvReluPluginCreator> registrar;
+    (void)registrar;
+}
+
+// ---------------------------------------------------------------------------
+// ConvReluPluginCreator implementation
+// ---------------------------------------------------------------------------
+
+ConvReluPluginCreator::ConvReluPluginCreator() : mNamespace("") {}
+
+const char* ConvReluPluginCreator::getPluginName() const noexcept {
+    return "KernelCraft_ConvReLU";
+}
+
+const char* ConvReluPluginCreator::getPluginVersion() const noexcept {
+    return "1";
+}
+
+const nvinfer1::PluginFieldCollection* ConvReluPluginCreator::getFieldNames() noexcept {
+    return &mFieldCollection;
+}
+
+nvinfer1::IPluginV2* ConvReluPluginCreator::createPlugin(
+    const char* name,
+    const nvinfer1::PluginFieldCollection* fc) noexcept {
+    int kernelSize = 3;
+    int inputChannels = 3;
+    int outputChannels = 64;
+
+    return new ConvReluPlugin(name, kernelSize, inputChannels, outputChannels);
+}
+
+nvinfer1::IPluginV2* ConvReluPluginCreator::deserializePlugin(
+    const char* name,
+    const void* serialData,
+    size_t serialLength) noexcept {
+    return new ConvReluPlugin(serialData, serialLength);
+}
+
+void ConvReluPluginCreator::setPluginNamespace(const char* pluginNamespace) noexcept {
+    mNamespace = pluginNamespace;
+}
+
+const char* ConvReluPluginCreator::getPluginNamespace() const noexcept {
+    return mNamespace.c_str();
 }

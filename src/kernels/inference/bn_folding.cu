@@ -23,6 +23,7 @@
 
 #include <cuda_runtime.h>
 #include <cmath>
+#include <cstdio>
 
 /**
  * \brief Fold batch normalization parameters into convolution weights and bias.
@@ -71,6 +72,9 @@ extern "C" __global__ void bn_folding_kernel(const float* __restrict__ conv_weig
 
     // Fold into bias
     if (conv_bias != nullptr) {
+        float bias_val = conv_bias[oc];
+        printf("DEBUG KERNEL: oc=%d, conv_bias[oc]=%f, scale=%f, bias_term=%f, result=%f\n",
+               oc, bias_val, scale, bias_term, bias_val * scale + bias_term);
         folded_bias[oc] = conv_bias[oc] * scale + bias_term;
     } else {
         folded_bias[oc] = bias_term;

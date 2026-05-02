@@ -4,6 +4,7 @@
 #include <NvInfer.h>
 #include <string>
 #include <vector>
+#include <cuda_runtime.h>
 
 namespace kernel_craft {
 namespace tensorrt {
@@ -19,12 +20,16 @@ protected:
     int mKernelSize;
     int mInputChannels;
     int mOutputChannels;
+    float* mDeviceKernel;
+    size_t mKernelSizeBytes;
 
 public:
-    KernelCraftBasePlugin(const std::string& name, int kernelSize,
-                          int inputChannels, int outputChannels);
+KernelCraftBasePlugin(const std::string& name, int kernelSize,
+                           int inputChannels, int outputChannels);
     KernelCraftBasePlugin(const void* data, size_t length);
-    ~KernelCraftBasePlugin() override = default;
+    ~KernelCraftBasePlugin() override;
+
+    void setKernelWeights(const float* hostKernel, size_t kernelBytes);
 
     const char* getPluginVersion() const noexcept override;
     int32_t getNbOutputs() const noexcept override;
@@ -116,6 +121,27 @@ class ConvInt8PluginCreator : public nvinfer1::IPluginCreator {
 public:
     ConvInt8PluginCreator();
     ~ConvInt8PluginCreator() override = default;
+
+    const char* getPluginName() const noexcept override;
+    const char* getPluginVersion() const noexcept override;
+    const nvinfer1::PluginFieldCollection* getFieldNames() noexcept override;
+    nvinfer1::IPluginV2* createPlugin(const char* name,
+                                       const nvinfer1::PluginFieldCollection* fc) noexcept override;
+    nvinfer1::IPluginV2* deserializePlugin(const char* name,
+                                            const void* serialData,
+                                            size_t serialLength) noexcept override;
+    void setPluginNamespace(const char* pluginNamespace) noexcept override;
+    const char* getPluginNamespace() const noexcept override;
+
+private:
+    std::string mNamespace;
+    nvinfer1::PluginFieldCollection mFieldCollection;
+};
+
+class ConvReluPluginCreator : public nvinfer1::IPluginCreator {
+public:
+    ConvReluPluginCreator();
+    ~ConvReluPluginCreator() override = default;
 
     const char* getPluginName() const noexcept override;
     const char* getPluginVersion() const noexcept override;

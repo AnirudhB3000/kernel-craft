@@ -176,16 +176,103 @@ bool test_conv_leaky_relu(int width, int height, int ksize) {
     return err < tolerance;
 }
 
+bool test_conv_sigmoid(int width, int height, int ksize) {
+    printf("Testing Conv+Sigmoid (%dx%d, kernel %dx%d)...\n", width, height, ksize, ksize);
+
+    int img_size = width * height;
+    int kernel_size = ksize * ksize;
+
+    std::vector<float> h_input(img_size);
+    std::vector<float> h_kernel(kernel_size);
+    std::vector<float> h_output_gpu(img_size);
+    std::vector<float> h_output_ref(img_size);
+    std::vector<float> h_conv_ref(img_size);
+
+    for (int i = 0; i < img_size; ++i) h_input[i] = (rand() % 1000) / 100.0f - 5.0f;
+    for (int i = 0; i < kernel_size; ++i) h_kernel[i] = (rand() % 100) / 100.0f - 0.5f;
+
+    conv_cpu_ref(h_input.data(), h_kernel.data(), h_conv_ref.data(), width, height, ksize);
+    for (int i = 0; i < img_size; ++i) h_output_ref[i] = sigmoid(h_conv_ref[i]);
+
+    float *d_input, *d_kernel, *d_output;
+    cudaMalloc(&d_input, img_size * sizeof(float));
+    cudaMalloc(&d_kernel, kernel_size * sizeof(float));
+    cudaMalloc(&d_output, img_size * sizeof(float));
+
+    cudaMemcpy(d_input, h_input.data(), img_size * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_kernel, h_kernel.data(), kernel_size * sizeof(float), cudaMemcpyHostToDevice);
+
+    dim3 block(16, 16);
+    launch_conv_sigmoid_naive(d_input, d_kernel, d_output, width, height, ksize, block);
+
+    cudaMemcpy(h_output_gpu.data(), d_output, img_size * sizeof(float), cudaMemcpyDeviceToHost);
+
+    float err = max_error(h_output_gpu.data(), h_output_ref.data(), img_size);
+    float tolerance = 1e-4f;
+
+    printf("  Max error: %f (tolerance: %f) -> %s\n", err, tolerance, err < tolerance ? "PASS" : "FAIL");
+
+    cudaFree(d_input); cudaFree(d_kernel); cudaFree(d_output);
+
+    return err < tolerance;
+}
+
 int main() {
     printf("=== Conv + Activation Fusion Tests ===\n\n");
-    
+
     bool all_pass = true;
-    
+
+    // ReLU tests (naive and tiled)
     all_pass &= test_conv_relu(64, 64, 3, "Naive", false);
     all_pass &= test_conv_relu(64, 64, 3, "Tiled", true);
     all_pass &= test_conv_relu(128, 128, 3, "Tiled", true);
+    all_pass &= test_conv_relu(256, 256, 3, "Tiled", true);
+
+    // Leaky ReLU tests
     all_pass &= test_conv_leaky_relu(64, 64, 3);
-    
+    all_pass &= test_conv_leaky_relu(128, 128, 3);
+
+    // Sigmoid tests
+    all_pass &= test_conv_sigmoid(64, 64, 3);
+    all_pass &= test_conv_sigmoid(128, 128, 3);
+
+    // Test with 5x5 kernel
+    all_pass &= test_conv_relu(64, 64, 5, "Tiled 5x5", true);
+
+    // Test with edge values (zeros, negative values)
+    printf("\nTesting with edge cases...\n");
+    {
+        int width = 32, height = 32, ksize = 3;
+        int img_size = width * height;
+        int kernel_size = ksize * ksize;
+
+        std::vector<float> h_input(img_size, 0.0f); // All zeros
+        std::vector<float> h_kernel(kernel_size, 1.0f); // All ones
+        std::vector<float> h_output_gpu(img_size);
+
+        float *d_input, *d_kernel, *d_output;
+        cudaMalloc(&d_input, img_size * sizeof(float));
+        cudaMalloc(&d_kernel, kernel_size * sizeof(float));
+        cudaMalloc(&d_output, img_size * sizeof(float));
+
+        cudaMemcpy(d_input, h_input.data(), img_size * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_kernel, h_kernel.data(), kernel_size * sizeof(float), cudaMemcpyHostToDevice);
+
+        dim3 block(16, 16);
+        launch_conv_relu_tiled(d_input, d_kernel, d_output, width, height, ksize, block);
+
+        cudaMemcpy(h_output_gpu.data(), d_output, img_size * sizeof(float), cudaMemcpyDeviceToHost);
+
+        bool pass = true;
+        for (int i = 0; i < img_size; ++i) {
+            if (h_output_gpu[i] != 0.0f) { pass = false; break; }
+        }
+        printf("  All zeros input: -> %s\n", pass ? "PASS" : "FAIL");
+        all_pass &= pass;
+
+        cudaFree(d_input); cudaFree(d_kernel); cudaFree(d_output);
+    }
+
     printf("\n=== %s ===\n", all_pass ? "ALL TESTS PASSED" : "SOME TESTS FAILED");
     return all_pass ? 0 : 1;
 }

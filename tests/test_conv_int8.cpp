@@ -129,18 +129,64 @@ bool test_int8_conv(int width, int height, int ksize, const char* name) {
 
 int main() {
     printf("=== INT8 Quantized Convolution Tests ===\n\n");
-    
+
     bool all_pass = true;
-    
-    // Test INT8 Naive
+
+    // Test INT8 Naive with various sizes
     all_pass &= test_int8_conv(64, 64, 3, "INT8 Naive");
     all_pass &= test_int8_conv(128, 128, 3, "INT8 Naive");
-    
-    // Test INT8 Tiled
+    all_pass &= test_int8_conv(256, 256, 3, "INT8 Naive");
+    all_pass &= test_int8_conv(512, 512, 3, "INT8 Naive");
+
+    // Test INT8 Tiled with various sizes
     all_pass &= test_int8_conv(64, 64, 3, "INT8 Tiled");
     all_pass &= test_int8_conv(128, 128, 3, "INT8 Tiled");
     all_pass &= test_int8_conv(256, 256, 3, "INT8 Tiled");
-    
+    all_pass &= test_int8_conv(512, 512, 3, "INT8 Tiled");
+
+    // Test with 5x5 kernel
+    all_pass &= test_int8_conv(128, 128, 5, "INT8 Tiled 5x5");
+
+    // Test with larger values (stress test quantization)
+    printf("\nTesting INT8 with larger values...\n");
+    {
+        int width = 64, height = 64, ksize = 3;
+        int img_size = width * height;
+        int kernel_size = ksize * ksize;
+
+        std::vector<float> h_input(img_size);
+        std::vector<float> h_kernel(kernel_size);
+        for (int i = 0; i < img_size; ++i) h_input[i] = (rand() % 1000) / 10.0f - 50.0f;
+        for (int i = 0; i < kernel_size; ++i) h_kernel[i] = (rand() % 1000) / 10.0f - 50.0f;
+
+        float input_scale = compute_quantization_scale(h_input.data(), img_size);
+        float kernel_scale = compute_quantization_scale(h_kernel.data(), kernel_size);
+
+        float *d_input, *d_kernel, *d_output;
+        cudaMalloc(&d_input, img_size * sizeof(float));
+        cudaMalloc(&d_kernel, kernel_size * sizeof(float));
+        cudaMalloc(&d_output, img_size * sizeof(float));
+
+        cudaMemcpy(d_input, h_input.data(), img_size * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_kernel, h_kernel.data(), kernel_size * sizeof(float), cudaMemcpyHostToDevice);
+
+        launch_conv_int8_tiled(d_input, d_kernel, d_output, width, height, ksize,
+                               input_scale, kernel_scale, 1.0f, dim3(16,16,1));
+
+        std::vector<float> h_output_gpu(img_size);
+        cudaMemcpy(h_output_gpu.data(), d_output, img_size * sizeof(float), cudaMemcpyDeviceToHost);
+
+        std::vector<float> h_output_ref(img_size);
+        conv_cpu_ref(h_input.data(), h_kernel.data(), h_output_ref.data(), width, height, ksize);
+
+        float err = max_error(h_output_gpu.data(), h_output_ref.data(), img_size);
+        float tolerance = 50.0f;  // INT8 has larger error with big values
+        printf("  Large values test: max error=%f (tolerance=%f) -> %s\n", err, tolerance, err < tolerance ? "PASS" : "FAIL");
+        all_pass &= (err < tolerance);
+
+        cudaFree(d_input); cudaFree(d_kernel); cudaFree(d_output);
+    }
+
     printf("\n=== %s ===\n", all_pass ? "ALL TESTS PASSED" : "SOME TESTS FAILED");
     return all_pass ? 0 : 1;
 }

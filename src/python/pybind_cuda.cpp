@@ -111,6 +111,30 @@ extern "C" int conv_graph_destroy(ConvGraph* ctx);
 extern "C" int conv_graph_launch(ConvGraph* ctx);
 
 // ---------------------------------------------------------------------------
+// Phase 10: Inference kernels (defined in inference/*.cu)
+// ---------------------------------------------------------------------------
+extern "C" void launch_conv_int8_naive(const float* d_input, const float* d_kernel,
+                                        float* d_output, int width, int height, int ksize,
+                                        float input_scale, float kernel_scale, float output_scale,
+                                        dim3 block);
+extern "C" void launch_conv_int8_tiled(const float* d_input, const float* d_kernel,
+                                        float* d_output, int width, int height, int ksize,
+                                        float input_scale, float kernel_scale, float output_scale,
+                                        dim3 block);
+extern "C" void launch_bn_folding(const float* d_conv_weights, const float* d_conv_bias,
+                                   float* d_folded_weights, float* d_folded_bias,
+                                   const float* d_bn_mean, const float* d_bn_variance,
+                                   const float* d_bn_gamma, const float* d_bn_beta,
+                                   float epsilon, int C_out, int C_in, int K_h, int K_w);
+extern "C" void launch_conv_relu_naive(const float* d_input, const float* d_kernel,
+                                        float* d_output, int width, int height, int ksize,
+                                        dim3 block);
+extern "C" void launch_conv_relu_tiled(const float* d_input, const float* d_kernel,
+                                        float* d_output, int width, int height, int ksize,
+                                        dim3 block);
+extern "C" float compute_quantization_scale(const float* h_data, int size);
+
+// ---------------------------------------------------------------------------
 // Tile size dispatch
 // ---------------------------------------------------------------------------
 
@@ -574,4 +598,168 @@ PYBIND11_MODULE(kernel_craft_python, m) {
             PyErr_SetString(PyExc_RuntimeError, e.what());
         }
     });
+
+    // ---- Phase 10: INT8 quantized convolution (numpy) ----
+    m.def("conv_int8_naive", [](py::array_t<float, py::array::c_style> input,
+                                 py::array_t<float, py::array::c_style> kernel,
+                                 float input_scale, float kernel_scale, float output_scale) {
+        // Input validation
+        if (input.ndim() != 2 || kernel.ndim() != 2)
+            throw std::runtime_error("Input and kernel must be 2D arrays");
+        if (kernel.shape(0) != kernel.shape(1) || kernel.shape(0) % 2 == 0)
+            throw std::runtime_error("Kernel must be square with odd dimension");
+
+        int height = static_cast<int>(input.shape(0));
+        int width = static_cast<int>(input.shape(1));
+        int ksize = static_cast<int>(kernel.shape(0));
+
+        // Allocate device memory
+        float *d_input, *d_kernel, *d_output;
+        CHECK_CUDA(cudaMalloc(&d_input, width * height * sizeof(float)));
+        CHECK_CUDA(cudaMalloc(&d_kernel, ksize * ksize * sizeof(float)));
+        CHECK_CUDA(cudaMalloc(&d_output, width * height * sizeof(float)));
+
+        // Copy data to device
+        CHECK_CUDA(cudaMemcpy(d_input, input.data(), width * height * sizeof(float), cudaMemcpyHostToDevice));
+        CHECK_CUDA(cudaMemcpy(d_kernel, kernel.data(), ksize * ksize * sizeof(float), cudaMemcpyHostToDevice));
+
+        // Launch kernel
+        launch_conv_int8_naive(d_input, d_kernel, d_output, width, height, ksize,
+                                input_scale, kernel_scale, output_scale, dim3(16,16,1));
+
+        // Create output array and copy result
+        py::array_t<float> result({height, width});
+        CHECK_CUDA(cudaMemcpy(result.mutable_data(), d_output, width * height * sizeof(float), cudaMemcpyDeviceToHost));
+
+        // Cleanup
+        cudaFree(d_input); cudaFree(d_kernel); cudaFree(d_output);
+        return result;
+    }, "INT8 quantized convolution (naive, numpy)\n\nArgs:\n  input, kernel, input_scale, kernel_scale, output_scale\n\nReturns:\n  numpy.ndarray",
+    py::arg("input"), py::arg("kernel"), py::arg("input_scale"), py::arg("kernel_scale"), py::arg("output_scale"));
+
+    // ---- Phase 10: Batch Normalization folding ----
+    m.def("bn_folding", [](py::array_t<float, py::array::c_style> conv_weights,
+                            py::object conv_bias,
+                            py::array_t<float, py::array::c_style> bn_mean,
+                            py::array_t<float, py::array::c_style> bn_variance,
+                            py::array_t<float, py::array::c_style> bn_gamma,
+                            py::array_t<float, py::array::c_style> bn_beta,
+                            float epsilon = 1e-5) {
+        // Validate inputs (simplified)
+        if (conv_weights.ndim() != 4) throw std::runtime_error("conv_weights must be 4D [C_out, C_in, K_h, K_w]");
+
+        int C_out = static_cast<int>(conv_weights.shape(0));
+        int C_in = static_cast<int>(conv_weights.shape(1));
+        int K_h = static_cast<int>(conv_weights.shape(2));
+        int K_w = static_cast<int>(conv_weights.shape(3));
+
+        // Allocate device memory
+        float *d_conv_weights, *d_conv_bias = nullptr, *d_folded_weights, *d_folded_bias;
+        float *d_bn_mean, *d_bn_variance, *d_bn_gamma, *d_bn_beta;
+        int weight_size = C_out * C_in * K_h * K_w;
+        CHECK_CUDA(cudaMalloc(&d_conv_weights, weight_size * sizeof(float)));
+        CHECK_CUDA(cudaMalloc(&d_folded_weights, weight_size * sizeof(float)));
+        CHECK_CUDA(cudaMalloc(&d_folded_bias, C_out * sizeof(float)));
+        CHECK_CUDA(cudaMalloc(&d_bn_mean, C_out * sizeof(float)));
+        CHECK_CUDA(cudaMalloc(&d_bn_variance, C_out * sizeof(float)));
+        CHECK_CUDA(cudaMalloc(&d_bn_gamma, C_out * sizeof(float)));
+        CHECK_CUDA(cudaMalloc(&d_bn_beta, C_out * sizeof(float)));
+
+        // Check if conv_bias is a valid array (not None and has data)
+        bool has_bias = !conv_bias.is_none() && py::isinstance<py::array>(conv_bias);
+        if (has_bias) {
+            py::array_t<float, py::array::c_style> bias_arr = py::cast<py::array_t<float, py::array::c_style>>(conv_bias);
+            if (bias_arr.size() > 0) {
+                CHECK_CUDA(cudaMalloc(&d_conv_bias, C_out * sizeof(float)));
+                CHECK_CUDA(cudaMemcpy(d_conv_bias, bias_arr.data(), C_out * sizeof(float), cudaMemcpyHostToDevice));
+            }
+        }
+
+        // Copy data
+        CHECK_CUDA(cudaMemcpy(d_conv_weights, conv_weights.data(), weight_size * sizeof(float), cudaMemcpyHostToDevice));
+        CHECK_CUDA(cudaMemcpy(d_bn_mean, bn_mean.data(), C_out * sizeof(float), cudaMemcpyHostToDevice));
+        CHECK_CUDA(cudaMemcpy(d_bn_variance, bn_variance.data(), C_out * sizeof(float), cudaMemcpyHostToDevice));
+        CHECK_CUDA(cudaMemcpy(d_bn_gamma, bn_gamma.data(), C_out * sizeof(float), cudaMemcpyHostToDevice));
+        CHECK_CUDA(cudaMemcpy(d_bn_beta, bn_beta.data(), C_out * sizeof(float), cudaMemcpyHostToDevice));
+
+        // Launch
+        launch_bn_folding(d_conv_weights, d_conv_bias, d_folded_weights, d_folded_bias,
+                           d_bn_mean, d_bn_variance, d_bn_gamma, d_bn_beta,
+                           epsilon, C_out, C_in, K_h, K_w);
+
+        // Allocate host buffers, copy from GPU
+        float* h_folded_weights = new float[weight_size];
+        float* h_folded_bias = new float[C_out];
+
+        CHECK_CUDA(cudaMemcpy(h_folded_weights, d_folded_weights, weight_size * sizeof(float), cudaMemcpyDeviceToHost));
+        CHECK_CUDA(cudaMemcpy(h_folded_bias, d_folded_bias, C_out * sizeof(float), cudaMemcpyDeviceToHost));
+
+    
+        // Create output - use Python list for bias to avoid stride issues
+        py::array_t<float> folded_weights({C_out, C_in, K_h, K_w});
+        float* w_ptr = folded_weights.mutable_data();
+        std::memcpy(w_ptr, h_folded_weights, weight_size * sizeof(float));
+
+        // Create list for bias (avoids pybind11 stride bug)
+        py::list bias_list;
+        for (int i = 0; i < C_out; ++i) {
+            bias_list.append(h_folded_bias[i]);
+        }
+
+        // Convert to numpy array
+        py::array_t<float> folded_bias = py::array_t<float>(bias_list);
+
+        // Free original buffers (vectors have copied the data)
+        delete[] h_folded_weights;
+        delete[] h_folded_bias;
+
+        // Cleanup
+        cudaFree(d_conv_weights); cudaFree(d_folded_weights); cudaFree(d_folded_bias);
+        cudaFree(d_bn_mean); cudaFree(d_bn_variance); cudaFree(d_bn_gamma); cudaFree(d_bn_beta);
+        if (d_conv_bias) cudaFree(d_conv_bias);
+
+        return py::make_tuple(folded_weights, folded_bias);
+    }, "Batch Normalization folding\n\nFolds BN parameters into conv weights.",
+    py::arg("conv_weights"), py::arg("conv_bias"), py::arg("bn_mean"), py::arg("bn_variance"),
+    py::arg("bn_gamma"), py::arg("bn_beta"), py::arg("epsilon") = 1e-5);
+
+    // ---- Phase 10: Conv + ReLU fusion (numpy) ----
+    m.def("conv_relu", [](py::array_t<float, py::array::c_style> input,
+                           py::array_t<float, py::array::c_style> kernel,
+                           bool tiled = false) {
+        if (input.ndim() != 2 || kernel.ndim() != 2)
+            throw std::runtime_error("Input and kernel must be 2D arrays");
+
+        int height = static_cast<int>(input.shape(0));
+        int width = static_cast<int>(input.shape(1));
+        int ksize = static_cast<int>(kernel.shape(0));
+
+        float *d_input, *d_kernel, *d_output;
+        CHECK_CUDA(cudaMalloc(&d_input, width * height * sizeof(float)));
+        CHECK_CUDA(cudaMalloc(&d_kernel, ksize * ksize * sizeof(float)));
+        CHECK_CUDA(cudaMalloc(&d_output, width * height * sizeof(float)));
+
+        CHECK_CUDA(cudaMemcpy(d_input, input.data(), width * height * sizeof(float), cudaMemcpyHostToDevice));
+        CHECK_CUDA(cudaMemcpy(d_kernel, kernel.data(), ksize * ksize * sizeof(float), cudaMemcpyHostToDevice));
+
+        if (tiled) {
+            launch_conv_relu_tiled(d_input, d_kernel, d_output, width, height, ksize, dim3(16,16,1));
+        } else {
+            launch_conv_relu_naive(d_input, d_kernel, d_output, width, height, ksize, dim3(16,16,1));
+        }
+
+        py::array_t<float> result({height, width});
+        CHECK_CUDA(cudaMemcpy(result.mutable_data(), d_output, width * height * sizeof(float), cudaMemcpyDeviceToHost));
+
+        cudaFree(d_input); cudaFree(d_kernel); cudaFree(d_output);
+        return result;
+    }, "Fused convolution + ReLU activation\n\nArgs:\n  input, kernel, tiled (bool)\n\nReturns:\n  numpy.ndarray",
+    py::arg("input"), py::arg("kernel"), py::arg("tiled") = false);
+
+    // ---- Phase 10: Compute quantization scale ----
+    m.def("compute_quantization_scale", [](py::array_t<float, py::array::c_style> data) {
+        int size = static_cast<int>(data.size());
+        return compute_quantization_scale(data.data(), size);
+    }, "Compute symmetric quantization scale for INT8\n\nArgs:\n  data (numpy.ndarray)\n\nReturns:\n  float scale",
+    py::arg("data"));
 }
