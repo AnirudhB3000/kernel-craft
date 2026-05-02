@@ -33,9 +33,9 @@
   - Performance considerations
 
 ### Remaining Tasks
-- [ ] Add Python helper scripts to export folded weights for TensorRT engine building
-- [ ] Add C++ and Python tests for all new inference components (currently have C++ tests)
-- [ ] Create TensorRT integration examples in `examples/tensorrt/`
+- [x] Add Python helper scripts to export folded weights for TensorRT engine building
+- [x] Add C++ and Python tests for all new inference components (currently have C++ tests)
+- [x] Create TensorRT integration examples in `examples/tensorrt/`
 
 ### Deferred ⏸️
 - [ ] **Transformer/LLM inference optimizations for vLLM integration**
