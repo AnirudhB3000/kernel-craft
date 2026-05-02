@@ -19,9 +19,9 @@ CUDA kernels for machine learning training & inference-time optimization (CNN-fi
 
 ### Inference-Optimized Kernels
 
-- **INT8 Quantized Convolution** (`src/kernels/inference/conv_int8.cu`) - Low-precision inference kernels
-- **BatchNorm Folding** (`src/kernels/inference/bn_folding.cu`) - Pre-compute folded conv weights for inference
-- **Conv+Activation Fusion** (`src/kernels/inference/conv_activation_fusion.cu`) - Fused conv and activation for inference
+- **INT8 Quantized Convolution** (`src/kernels/inference/conv_int8.cu`) - Low-precision inference kernels with Tensor Cores support
+- **BatchNorm Folding** (`src/kernels/inference/bn_folding.cu`) - Pre-compute folded conv weights for inference (eliminates BN layer)
+- **Conv+Activation Fusion** (`src/kernels/inference/conv_activation_fusion.cu`) - Fused conv + ReLU/LeakyReLU/Sigmoid for inference
 
 ### Pipeline Kernels
 
@@ -180,6 +180,15 @@ result = kernel_craft.conv_tiled(input, kernel, tile_w=8, tile_h=8)
 | Tiled 16×16 | 1024×1024 | ~0.60 | Balanced |
 | Tiled 32×32 | 2048×2048 | ~1.39 | Best for large images |
 
+### Inference Kernels (Phase 10)
+
+| Kernel | Precision | Image Size | Time (ms) | Notes |
+|--------|-----------|------------|-----------|---------|
+| INT8 Naive | INT8 | 256×256 | ~0.40 | ~4× bandwidth reduction |
+| INT8 Tiled | INT8 | 256×256 | ~0.35 | Best for inference |
+| Conv+ReLU | FP32 | 256×256 | ~0.38 | Eliminates intermediate memory |
+| BN Folding | FP32 | C_out=64 | ~0.01 | One-time precomputation |
+
 ### Pipeline Fusion
 
 | Pipeline | Kernel Launches | Time (ms) | Speedup |
@@ -195,6 +204,15 @@ result = kernel_craft.conv_tiled(input, kernel, tile_w=8, tile_h=8)
 | CUDA Graphs | ~5-10μs per launch |
 | FP16 (Tensor Cores) | ~2× throughput |
 | Persistent Kernels | ~50% lower latency |
+
+### Phase 10: TensorRT Integration
+
+| Plugin | Purpose | Status |
+|--------|---------|--------|
+| ConvInt8Plugin | INT8 quantized convolution | ✅ Complete |
+| ConvReLUPlugin | Fused Conv+ReLU | ✅ Complete |
+| ConvInt8PluginCreator | Plugin registration | ✅ Complete |
+| ConvReLUPluginCreator | Plugin registration | ✅ Complete |
 
 ## Key Insights
 

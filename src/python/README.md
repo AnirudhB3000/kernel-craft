@@ -39,7 +39,7 @@ The module will be at `src/python/build/kernel_craft_python.cpython-*.so`.
 
 ```python
 import sys
-sys.path.insert(0, 'src/python/build')
+sys.path.insert(0, 'src/python/build")
 
 import kernel_craft_python as kc
 import numpy as np
@@ -53,6 +53,26 @@ out = kc.conv_naive(input, kernel)  # -> np.ndarray
 
 # Tiled convolution with configurable tile size
 out = kc.conv_tiled(input, kernel, tile_w=8, tile_h=8)  # -> np.ndarray
+
+# Phase 10: Inference kernels
+# INT8 quantized convolution
+input_scale = kc.compute_quantization_scale(input)
+kernel_scale = kc.compute_quantization_scale(kernel)
+out_int8 = kc.conv_int8_naive(input, kernel, input_scale, kernel_scale, 1.0)
+
+# Batch Normalization folding (pre-compute for inference)
+conv_weights = np.random.rand(64, 3, 3, 3).astype(np.float32)
+conv_bias = np.random.rand(64).astype(np.float32)
+bn_mean = np.random.rand(64).astype(np.float32)
+bn_variance = np.random.rand(64).astype(np.float32) + 0.01
+bn_gamma = np.random.rand(64).astype(np.float32) + 0.5
+bn_beta = np.random.rand(64).astype(np.float32) - 0.05
+folded_weights, folded_bias = kc.bn_folding(
+    conv_weights, conv_bias, bn_mean, bn_variance, bn_gamma, bn_beta
+)
+
+# Fused Conv+ReLU
+out_relu = kc.conv_relu(input, kernel, tiled=True)
 ```
 
 ## Version
@@ -88,10 +108,14 @@ out = kc.conv_tiled(input, kernel, tile_w=16, tile_h=16)  # -> torch.Tensor on G
 
 ## API Reference
 
-| Function | Input Type | Output Type |
-|----------|-----------|--------------|
-| `conv_naive(input, kernel)` | np.ndarray or Tensor | np.ndarray or Tensor |
-| `conv_tiled(input, kernel, tile_w, tile_h)` | np.ndarray or Tensor | np.ndarray or Tensor |
+| Function | Input Type | Output Type | Description |
+|----------|-----------|--------------|-------------|
+| `conv_naive(input, kernel)` | np.ndarray or Tensor | np.ndarray or Tensor | Baseline convolution |
+| `conv_tiled(input, kernel, tile_w, tile_h)` | np.ndarray or Tensor | np.ndarray or Tensor | Tiled convolution |
+| `conv_int8_naive(input, kernel, input_scale, kernel_scale, output_scale)` | np.ndarray | np.ndarray | INT8 quantized |
+| `bn_folding(conv_weights, conv_bias, bn_mean, bn_variance, bn_gamma, bn_beta, epsilon)` | np.ndarray | tuple(np.ndarray, np.ndarray) | BN folding |
+| `conv_relu(input, kernel, tiled)` | np.ndarray | np.ndarray | Fused Conv+ReLU |
+| `compute_quantization_scale(data)` | np.ndarray | float | INT8 scale |
 
 ### Parameters
 
@@ -99,6 +123,14 @@ out = kc.conv_tiled(input, kernel, tile_w=16, tile_h=16)  # -> torch.Tensor on G
 - `kernel`: Convolution kernel (2D, float32, odd dimension)
 - `tile_w`: Tile width for tiled convolution (default: 8)
 - `tile_h`: Tile height for tiled convolution (default: 8)
+- `input_scale`: Scale factor for INT8 quantization
+- `kernel_scale`: Scale factor for INT8 quantization
+- `output_scale`: Scale factor for INT8 dequantization
+- `conv_weights`: 4D array [C_out, C_in, K_h, K_w]
+- `conv_bias`: 1D array [C_out] or None
+- `bn_mean`, `bn_variance`, `bn_gamma`, `bn_beta`: 1D arrays [C_out]
+- `epsilon`: Small constant for numerical stability (default: 1e-5)
+- `tiled`: Use tiled implementation for Conv+ReLU (default: False)
 
 ### Supported Tile Sizes
 

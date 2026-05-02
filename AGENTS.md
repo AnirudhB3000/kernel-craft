@@ -418,11 +418,24 @@ Track:
 * Optimize preprocessing
 * Run end-to-end benchmarks
 
-## Phase 10: ML Inference & TensorRT Support (CNN-First) (Week 9+)
-* **INT8 Quantized Convolution** (`src/kernels/inference/conv_int8.cu`) - Low-precision inference kernels
-* **BatchNorm Folding** (`src/kernels/inference/bn_folding.cu`) - Pre-compute folded conv weights
-* **Conv+Activation Fusion** (`src/kernels/inference/conv_activation_fusion.cu`) - Fused conv and activation
+## Phase 10: ML Inference & TensorRT Support (CNN-First) (Week 9+) ✅ COMPLETE
+* **INT8 Quantized Convolution** (`src/kernels/inference/conv_int8.cu`) - Low-precision inference kernels with Tensor Cores support
+* **BatchNorm Folding** (`src/kernels/inference/bn_folding.cu`) - Pre-compute folded conv weights (eliminates BN layer)
+* **Conv+Activation Fusion** (`src/kernels/inference/conv_activation_fusion.cu`) - Fused conv + ReLU/LeakyReLU/Sigmoid
 * **TensorRT Plugin Wrappers** (`src/tensorrt/plugin_wrapper.cpp`) - Custom TensorRT plugins for CNN inference
+  - `ConvInt8Plugin` - INT8 quantized convolution plugin
+  - `ConvReLUPlugin` - Fused Conv+ReLU plugin
+  - `ConvInt8PluginCreator` & `ConvReLUPluginCreator` - Plugin registration
+  - Proper kernel weight management via `setKernelWeights()`
+* **Python Bindings for Phase 10** (`src/python/pybind_cuda.cpp`)
+  - `conv_int8_naive()` - INT8 quantized convolution
+  - `bn_folding()` - BatchNorm folding (returns folded weights + bias)
+  - `conv_relu()` - Fused Conv+ReLU (naive/tiled)
+  - `compute_quantization_scale()` - Compute INT8 scale factors
+* **Enhanced Tests**:
+  - C++: Added tests for INT8 (large values, 5x5 kernel), BN folding (no bias, larger channels), Conv+Activation (Sigmoid)
+  - Python: 13 new tests for Phase 10 kernels (49 total, 6 skipped)
+  - Fixed pybind11 stride bug in BN folding Python binding
 * Document TensorRT integration workflows for vision model deployment
 * (Deferred) Transformer/LLM inference optimizations for vLLM integration
 
@@ -458,6 +471,7 @@ Focus is on:
 * Prioritize clarity over premature optimization
 * Always validate correctness before optimizing
 * Profile before making assumptions
+* **pybind11 Note**: When returning numpy arrays from C++, avoid `py::array_t` with pointer + shape (causes stride=0 bug). Use `std::vector` and list conversion instead, or `py::array_t` with vector (copy).
 
 ---
 
