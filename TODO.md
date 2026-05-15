@@ -37,12 +37,76 @@
 - [x] Add C++ and Python tests for all new inference components (currently have C++ tests)
 - [x] Create TensorRT integration examples in `examples/tensorrt/`
 
-### Deferred ⏸️
-- [ ] **Transformer/LLM inference optimizations for vLLM integration**
-  - Attention kernel optimization
-  - KV-cache management
-  - PagedAttention implementation
-  - Continuous batching support
+### Deferred → Phase 11 ✅ Planned
+
+---
+
+## Phase 11: Transformer/LLM Inference Optimizations (vLLM Integration) - PLANNED
+
+### 11.1 FlashAttention Kernels
+- [ ] **Multi-Head Attention** (`src/kernels/transformer/flash_attention.cu`)
+  - Tiled Q/K/V with online softmax (no full N×N matrix materialization)
+  - Causal masking support
+  - Launcher: `launch_flash_attention(Q, K, V, O, B, H, N, d, causal, stream)`
+  - Tests: `tests/test_flash_attention.cpp`
+  - Benchmark: `benchmarks/benchmark_flash_attention.cpp`
+  - Target: >80% theoretical memory bandwidth
+- [ ] **Grouped-Query / Multi-Query Attention** (`src/kernels/transformer/gqa_attention.cu`)
+  - Fewer KV heads than Q heads (Llama 2/3, Mistral, Falcon architectures)
+  - Tests included in `tests/test_flash_attention.cpp`
+
+### 11.2 vLLM PagedAttention
+- [ ] **PagedAttention kernel** (`src/kernels/transformer/paged_attention.cu`)
+  - Non-contiguous KV-cache via block table (`int* block_table[batch, max_blocks]`)
+  - Variable sequence lengths; prefix caching (skip duplicate block pointers)
+  - Launcher: `launch_paged_attention(Q, block_table, K_pool, V_pool, O, seq_lens, ...)`
+  - Tests: `tests/test_paged_attention.cpp` (correctness vs contiguous FlashAttention)
+  - Benchmark: `benchmarks/benchmark_paged_attention.cpp` (page sizes 16/32/64)
+- [ ] **TensorRT PagedAttention plugin** (`src/tensorrt/paged_attention_plugin.cpp`)
+  - Custom TensorRT plugin following `plugin_wrapper.cpp` pattern
+
+### 11.3 LLM Quantization Kernels
+- [ ] **INT4 weight dequant + GEMM** (`src/kernels/transformer/quant_int4.cu`)
+  - GPTQ/AWQ-style: 2×INT4 packed per byte, per-group (128) FP16 scales
+  - Unpacking via bit shifts; Tensor Core path on Ampere+
+  - Tests: `tests/test_quant_int4.cpp` (dequant→FP32 max relative error <1%)
+- [ ] **FP8 activation quantization** (`src/kernels/transformer/fp8_quant.cu`)
+  - E4M3 format (`__nv_fp8_e4m3`, CUDA 11.8+), per-token and per-channel scaling
+  - SmoothQuant-compatible; saturate out-of-range values
+  - Tests: `tests/test_fp8_quant.cpp` (round-trip quantize→dequantize error bounds)
+
+### 11.4 Advanced Inference Features
+- [ ] **Speculative decoding** (`src/kernels/transformer/speculative_decoding.cu`)
+  - Draft token verification via rejection sampling
+  - Inputs: `[draft_probs, target_probs, draft_tokens]` → `accepted_mask`
+  - Tests: `tests/test_speculative_decoding.cpp` (mask correctness at varying acceptance rates)
+  - Target: >1.5x decode speedup
+- [ ] **Tensor parallelism primitives** (`src/kernels/transformer/tensor_parallel.cu`)
+  - All-reduce (ring-based, multi-GPU) and all-gather
+  - NCCL wrapper when available; manual ring-reduce fallback
+  - Tests: `tests/test_tensor_parallel.cpp` (single-GPU stream simulation + multi-GPU if available)
+- [ ] **Continuous batching** — dynamic `seq_lens` array in PagedAttention launcher
+
+### 11.5 Python Bindings & vLLM Plugin
+- [ ] **pybind11 transformer module** (`src/python/pybind_transformer.cpp`)
+  - Exposes: `flash_attention()`, `paged_attention()`, `quant_int4_dequant()`, `fp8_quantize()`, `speculative_decode()`
+  - Follows pattern of `src/python/pybind_cuda.cpp`
+- [ ] **vLLM custom ops integration** (`src/tensorrt/vllm_plugin_wrapper.cpp`)
+  - vLLM-compatible custom op interface
+- [ ] **Python tests** (`src/python/tests/test_transformer_bindings.py`)
+  - pytest suite for all Python-exposed transformer kernels vs numpy reference
+
+### CMake
+- [ ] Add test executables for all 6 new test files
+- [ ] Add benchmark executables for 3 new benchmark files
+- [ ] Add `pybind_transformer.cpp` to `kernel_craft_python` extension target
+- [ ] Optional NCCL detection (mirror existing optional TensorRT block)
+
+### Success Criteria
+- FlashAttention: >80% theoretical memory bandwidth on A100
+- PagedAttention: integrates with vLLM without performance regression
+- INT4 quantization: <1% accuracy drop on standard benchmarks
+- Speculative decoding: >1.5x speedup for supported models
 
 ---
 
@@ -110,22 +174,25 @@
 
 ---
 
-## Phase 8: Integration Enhancements - PENDING
+## Phase 8: Integration Enhancements - COMPLETE ✅
 
-- [ ] **Async Stream Operations**
-  - Implement stream-based async execution
-  - Overlap memory transfer with compute
-  - Profile pipeline throughput
+- [x] **Async Stream Operations** (`src/performance/async_streams.cu`)
+  - Double-buffered batch processing with ping-pong device buffers
+  - Pinned host memory for true async H2D/D2H overlap
+  - Tests: `tests/test_async_streams.cpp` (4 tests)
+  - Benchmark: `benchmarks/benchmark_async_streams.cpp`
 
-- [ ] **Unified Memory**
-  - Add unified memory kernel variants
-  - Simplify memory management
-  - Test with memory oversubscription
+- [x] **Unified Memory** (`src/performance/unified_memory.cu`)
+  - `unified_conv_naive` and `unified_conv_tiled` using cudaMallocManaged
+  - `unified_prefetch_to_gpu` / `unified_prefetch_to_cpu` via cudaMemPrefetchAsync
+  - Tests: `tests/test_unified_memory.cpp` (5 tests)
+  - Benchmark: `benchmarks/benchmark_unified_memory.cpp`
 
-- [ ] **Multi-Stream Pipeline**
-  - Run preprocessing + inference concurrently
-  - Use separate CUDA streams
-  - Benchmark end-to-end latency
+- [x] **Multi-Stream Pipeline** (`src/performance/multi_stream_pipeline.cu`)
+  - Concurrent preprocess (resize+normalize) and inference (conv+relu) streams
+  - Inter-stream synchronization via cudaEvent
+  - Tests: `tests/test_multi_stream_pipeline.cpp` (3 tests)
+  - Benchmark: `benchmarks/benchmark_multi_stream_pipeline.cpp`
 
 ---
 
@@ -161,10 +228,18 @@ src/
 │   │   ├── conv_transposed.cu
 │   │   ├── conv_dilated.cu
 │   │   └── conv3d.cu
-│   └── inference/       # Inference optimization kernels
-│       ├── conv_int8.cu
-│       ├── bn_folding.cu
-│       └── conv_activation_fusion.cu
+│   ├── inference/       # Inference optimization kernels
+│   │   ├── conv_int8.cu
+│   │   ├── bn_folding.cu
+│   │   └── conv_activation_fusion.cu
+│   └── transformer/     # Transformer/LLM inference kernels (Phase 11)
+│       ├── flash_attention.cu
+│       ├── gqa_attention.cu
+│       ├── paged_attention.cu
+│       ├── quant_int4.cu
+│       ├── fp8_quant.cu
+│       ├── speculative_decoding.cu
+│       └── tensor_parallel.cu
 ```
 
 ---

@@ -12,8 +12,6 @@ This document defines the goals, scope, and execution plan for developing deep e
 - When any logic is added or modified, corresponding tests must be added or updated.
 - Design decisions, whether high‑level architecture or low‑level implementation choices, must be documented in this CLAUDE.md file.
 - Updates to logic that affect interfaces or behavior require an entry in CLAUDE.md describing the change.
-- The naive convolution implementation (`src/kernels/core/conv_naive.cu`) is verified by `tests/test_conv_naive.cpp`.
-- The tiled convolution implementation (`src/kernels/core/conv_tiled.cu`) is verified by `tests/test_conv_tiled.cpp`.
 
 ### Documentation Style
 
@@ -112,6 +110,38 @@ Example:
 | Persistent | ~0μs | ~50% lower | Fixed batch streams |
 
 **Key Insight**: Persistent kernels eliminate re-launch overhead but require constant workload.
+
+---
+
+## Phase 8: Integration Enhancements Results
+
+#### Async Stream Operations (Double-Buffering)
+
+| Approach | Observed (512×512, 16 batches) | Notes |
+|----------|-------------------------------|-------|
+| Synchronous | baseline | Sequential H2D → compute → D2H |
+| Async (double-buffer) | ~2x on large batches | PCIe transfer hidden by compute |
+
+**Key Insight**: Requires pinned (cudaMallocHost) host memory for true async overlap; pageable memory falls back to synchronous copies.
+
+#### Unified Memory
+
+| Strategy | Relative Overhead | Notes |
+|----------|------------------|-------|
+| Explicit cudaMemcpy | baseline | Manual staging, predictable |
+| Unified (no prefetch) | +0–3× on first access | Page faults drive migration |
+| Unified + prefetch | ~baseline | cudaMemPrefetchAsync hides faults |
+
+**Key Insight**: Unified memory simplifies code but requires prefetching to match explicit-transfer performance. On discrete GPUs, first-access page faults add significant latency.
+
+#### Multi-Stream Pipeline (Preprocess + Inference Concurrency)
+
+| Mode | Streams | Notes |
+|------|---------|-------|
+| Single-stream | 1 | Sequential resize → normalize → conv → relu |
+| Multi-stream | 2 | Preprocess and inference overlap via cudaEvent |
+
+**Key Insight**: Concurrency benefit is realized when preprocessing and inference kernels occupy different GPU hardware units simultaneously; inter-stream synchronization uses `cudaStreamWaitEvent` on a timing-disabled event to minimize overhead.
 
 ---
 
@@ -438,6 +468,57 @@ Track:
   - Fixed pybind11 stride bug in BN folding Python binding
 * Document TensorRT integration workflows for vision model deployment
 * (Deferred) Transformer/LLM inference optimizations for vLLM integration
+
+---
+
+## Phase 11: Transformer/LLM Inference Optimizations for vLLM Integration (Planned)
+
+### Motivation
+Extend kernel-craft beyond CNNs to support Transformer-based LLM inference pipelines, specifically targeting vLLM integration for high-throughput serving.
+
+### Goals
+* Implement optimized attention mechanisms (FlashAttention, PagedAttention)
+* Develop KV-cache management kernels
+* Add LLM-specific quantization (INT4, GPTQ, AWQ)
+* Create tensor parallelism and speculative decoding kernels
+
+### Tasks
+
+#### 11.1 FlashAttention Kernels
+* **Multi-Head Attention (MHA)** - Optimized attention without materializing large attention matrices
+* **Grouped-Query Attention (GQA)** - Support for Llama 2/3, Mistral architectures
+* **Multi-Query Attention (MQA)** - Single KV head for Falcon-style models
+* Deliverables: `src/kernels/transformer/flash_attention.cu`, `src/kernels/transformer/gqa_attention.cu`
+
+#### 11.2 vLLM PagedAttention Integration
+* **PagedAttention Kernel** - Non-contiguous KV-cache access patterns for vLLM
+* **Blocked KV-Cache Management** - Memory-efficient cache allocation
+* **Prefix Caching Support** - Reuse shared prompt prefixes
+* Deliverables: `src/kernels/transformer/paged_attention.cu`, `src/tensorrt/paged_attention_plugin.cpp`
+
+#### 11.3 LLM Quantization Kernels
+* **INT4 Weight Quantization** - GPTQ/AWQ-style quantized weights
+* **Activation Quantization** - SmoothQuant, FP8 for activations
+* **Dynamic Quantization** - Per-token or per-channel scaling
+* Deliverables: `src/kernels/transformer/quant_int4.cu`, `src/kernels/transformer/fp8_quant.cu`
+
+#### 11.4 Advanced Inference Features
+* **Speculative Decoding** - Draft model verification kernels
+* **Tensor Parallelism** - All-reduce and All-gather primitives
+* **Continuous Batching** - Dynamic sequence addition/removal
+* Deliverables: `src/kernels/transformer/speculative_decoding.cu`, `src/kernels/transformer/tensor_parallel.cu`
+
+#### 11.5 Python Bindings & vLLM Plugin
+* Expose attention kernels to Python
+* Create vLLM custom ops integration
+* Benchmark against vLLM baseline
+* Deliverables: `src/python/pybind_transformer.cpp`, `src/tensorrt/vllm_plugin_wrapper.cpp`
+
+### Success Criteria
+* FlashAttention achieves >80% of theoretical memory bandwidth
+* PagedAttention integrates with vLLM without performance regression
+* INT4 quantization maintains <1% accuracy drop on standard benchmarks
+* Speculative decoding provides >1.5x speedup for supported models
 
 ---
 

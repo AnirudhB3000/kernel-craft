@@ -129,6 +129,12 @@ extern "C" int conv_graph_launch(cudaStream_t stream = 0) {
     return (err == cudaSuccess) ? 0 : -1;
 }
 
+/**
+ * \brief Apply ReLU activation in-place on device data.
+ *
+ * \param[in,out] d_data Device pointer to the data array.
+ * \param[in]     size   Number of elements.
+ */
 extern "C" void relu(float* d_data, int size) {
     relu_nosync(d_data, size);
 }

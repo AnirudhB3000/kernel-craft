@@ -122,6 +122,20 @@ extern "C" void launch_conv_tiled(const float* d_input,
     // ----- Returned to CPU -----
 }
 
+/**
+ * \brief Launch tiled convolution without device synchronization.
+ *
+ * Identical to launch_conv_tiled but omits cudaDeviceSynchronize, allowing
+ * asynchronous overlap with subsequent operations on the same stream.
+ *
+ * \param[in]  d_input  Device pointer to input image.
+ * \param[in]  d_kernel Device pointer to convolution kernel weights.
+ * \param[out] d_output Device pointer to output image.
+ * \param[in]  width    Image width in pixels.
+ * \param[in]  height   Image height in pixels.
+ * \param[in]  ksize    Kernel side length (e.g. 3 for 3×3).
+ * \param[in]  block    CUDA block dimensions controlling tile size.
+ */
 extern "C" void conv_tiled_nosync(const float* d_input,
                             const float* d_kernel,
                             float* d_output,

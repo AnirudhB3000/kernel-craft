@@ -109,7 +109,15 @@ extern "C" __global__ void relu_layer(const float* __restrict__ input,
 }
 
 /**
- * \brief Host launcher for separable conv layer.
+ * \brief Host launcher for the separate conv layer.
+ *
+ * \param[in]  d_input  Device pointer to input image.
+ * \param[in]  d_kernel Device pointer to convolution kernel weights.
+ * \param[out] d_output Device pointer to output image.
+ * \param[in]  width    Image width in pixels.
+ * \param[in]  height   Image height in pixels.
+ * \param[in]  ksize    Kernel side length.
+ * \param[in]  block    CUDA block dimensions.
  */
 extern "C" void launch_conv_layer(const float* d_input,
                                  const float* d_kernel,

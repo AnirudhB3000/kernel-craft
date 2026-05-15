@@ -173,6 +173,16 @@ target_link_libraries(test_conv_activation_fusion PRIVATE kernels)
 add_executable(test_tensorrt_integration tests/test_tensorrt_integration.cpp)
 target_link_libraries(test_tensorrt_integration PRIVATE kernels)
 
+# Phase 8: Integration Enhancements tests
+add_executable(test_async_streams tests/test_async_streams.cpp)
+target_link_libraries(test_async_streams PRIVATE kernels)
+
+add_executable(test_unified_memory tests/test_unified_memory.cpp)
+target_link_libraries(test_unified_memory PRIVATE kernels)
+
+add_executable(test_multi_stream_pipeline tests/test_multi_stream_pipeline.cpp)
+target_link_libraries(test_multi_stream_pipeline PRIVATE kernels)
+
 # Test executable for TensorRT plugin (only if TensorRT is available)
 if(HAVE_TENSORRT)
     add_executable(test_tensorrt_plugin tests/test_tensorrt_plugin.cpp
@@ -216,6 +226,16 @@ target_link_libraries(benchmark_mixed_precision PRIVATE kernels)
 add_executable(benchmark_persistent_kernels benchmarks/benchmark_persistent_kernels.cpp)
 target_link_libraries(benchmark_persistent_kernels PRIVATE kernels)
 
+# Phase 8: Integration Enhancements benchmarks
+add_executable(benchmark_async_streams benchmarks/benchmark_async_streams.cpp)
+target_link_libraries(benchmark_async_streams PRIVATE kernels)
+
+add_executable(benchmark_unified_memory benchmarks/benchmark_unified_memory.cpp)
+target_link_libraries(benchmark_unified_memory PRIVATE kernels)
+
+add_executable(benchmark_multi_stream_pipeline benchmarks/benchmark_multi_stream_pipeline.cpp)
+target_link_libraries(benchmark_multi_stream_pipeline PRIVATE kernels)
+
 # Enable CTest BEFORE registering tests
 include(CTest)
 enable_testing()
@@ -239,6 +259,11 @@ add_test(NAME bn_folding_test COMMAND test_bn_folding)
 add_test(NAME conv_activation_fusion_test COMMAND test_conv_activation_fusion)
 add_test(NAME tensorrt_integration_test COMMAND test_tensorrt_integration)
 
+# Phase 8: Integration Enhancements tests
+add_test(NAME async_streams_test COMMAND test_async_streams)
+add_test(NAME unified_memory_test COMMAND test_unified_memory)
+add_test(NAME multi_stream_pipeline_test COMMAND test_multi_stream_pipeline)
+
 # Register all benchmarks as tests
 add_test(NAME benchmark_conv COMMAND benchmark_conv)
 add_test(NAME benchmark_custom COMMAND benchmark_custom)
@@ -249,17 +274,22 @@ add_test(NAME benchmark_cuda_graphs COMMAND benchmark_cuda_graphs)
 add_test(NAME benchmark_mixed_precision COMMAND benchmark_mixed_precision)
 add_test(NAME benchmark_persistent_kernels COMMAND benchmark_persistent_kernels)
 
+# Phase 8 benchmarks
+add_test(NAME benchmark_async_streams COMMAND benchmark_async_streams)
+add_test(NAME benchmark_unified_memory COMMAND benchmark_unified_memory)
+add_test(NAME benchmark_multi_stream_pipeline COMMAND benchmark_multi_stream_pipeline)
+
 # Convenience target that runs all registered tests and shows a concise summary
 add_custom_target(run_tests
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-    DEPENDS test_conv_naive test_conv_tiled test_preprocess test_pipeline test_custom_op test_memory_pool test_cuda_graphs test_mixed_precision test_persistent_kernels test_conv_int8 test_bn_folding test_conv_activation_fusion
+    DEPENDS test_conv_naive test_conv_tiled test_preprocess test_pipeline test_custom_op test_memory_pool test_cuda_graphs test_mixed_precision test_persistent_kernels test_conv_int8 test_bn_folding test_conv_activation_fusion test_async_streams test_unified_memory test_multi_stream_pipeline
     COMMENT "Running all unit tests via CTest"
 )
 
 # Convenience target to run only benchmarks via CTest (provides summary)
 add_custom_target(run_benchmarks
     COMMAND ${CMAKE_CTEST_COMMAND} -R benchmark_ --output-on-failure
-    DEPENDS benchmark_conv benchmark_custom benchmark_pipeline benchmark_full_pipeline benchmark_memory_pool benchmark_cuda_graphs benchmark_mixed_precision benchmark_persistent_kernels
+    DEPENDS benchmark_conv benchmark_custom benchmark_pipeline benchmark_full_pipeline benchmark_memory_pool benchmark_cuda_graphs benchmark_mixed_precision benchmark_persistent_kernels benchmark_async_streams benchmark_unified_memory benchmark_multi_stream_pipeline
     COMMENT "Running all benchmarks via CTest"
 )
 

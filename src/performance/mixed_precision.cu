@@ -27,6 +27,19 @@
 #define TILE_H 8
 #endif
 
+/**
+ * \brief Tiled convolution kernel in FP32 precision using shared memory.
+ *
+ * Accumulates products in double precision to reduce rounding error before
+ * writing the final FP32 result.
+ *
+ * \param[in]  input  Device pointer to FP32 input image.
+ * \param[in]  kernel Device pointer to FP32 convolution weights.
+ * \param[out] output Device pointer to FP32 output image.
+ * \param[in]  width  Image width in pixels.
+ * \param[in]  height Image height in pixels.
+ * \param[in]  ksize  Kernel side length.
+ */
 __global__ void conv_tiled_fp32(const float* __restrict__ input,
                               const float* __restrict__ kernel,
                               float* __restrict__ output,
@@ -66,6 +79,19 @@ __global__ void conv_tiled_fp32(const float* __restrict__ input,
     }
 }
 
+/**
+ * \brief Tiled convolution kernel in FP16 (half) precision.
+ *
+ * Loads half-precision tiles into shared memory and accumulates in FP32 to
+ * preserve accuracy. Requires CUDA device with half-precision support (sm_53+).
+ *
+ * \param[in]  input  Device pointer to FP16 input image.
+ * \param[in]  kernel Device pointer to FP16 convolution weights.
+ * \param[out] output Device pointer to FP16 output image.
+ * \param[in]  width  Image width in pixels.
+ * \param[in]  height Image height in pixels.
+ * \param[in]  ksize  Kernel side length.
+ */
 __global__ void conv_tiled_fp16(const half* __restrict__ input,
                                 const half* __restrict__ kernel,
                                 half* __restrict__ output,
@@ -105,6 +131,20 @@ __global__ void conv_tiled_fp16(const half* __restrict__ input,
     }
 }
 
+/**
+ * \brief Tiled convolution kernel using TF32 math mode (Ampere+).
+ *
+ * Uses the same FP32 data layout as conv_tiled_fp32 but enables
+ * CUDA_MATH_DISALLOW_REDUCED_PRECISION_REDUCTION to leverage TF32 Tensor
+ * Cores on Ampere GPUs for ~1.1x throughput improvement.
+ *
+ * \param[in]  input  Device pointer to FP32 input image.
+ * \param[in]  kernel Device pointer to FP32 convolution weights.
+ * \param[out] output Device pointer to FP32 output image.
+ * \param[in]  width  Image width in pixels.
+ * \param[in]  height Image height in pixels.
+ * \param[in]  ksize  Kernel side length.
+ */
 __global__ void conv_tiled_tf32(const float* __restrict__ input,
                                  const float* __restrict__ kernel,
                                  float* __restrict__ output,

@@ -189,6 +189,17 @@ extern "C" __global__ void conv_sigmoid_naive(const float* __restrict__ input,
 // Host launchers
 // ---------------------------------------------------------------------------
 
+/**
+ * \brief Launch naive fused conv+ReLU kernel.
+ *
+ * \param[in]  d_input  Device pointer to input image.
+ * \param[in]  d_kernel Device pointer to convolution kernel weights.
+ * \param[out] d_output Device pointer to output image.
+ * \param[in]  width    Image width in pixels.
+ * \param[in]  height   Image height in pixels.
+ * \param[in]  ksize    Kernel side length.
+ * \param[in]  block    CUDA block dimensions.
+ */
 extern "C" void launch_conv_relu_naive(const float* d_input,
                                        const float* d_kernel,
                                        float* d_output,
@@ -199,6 +210,18 @@ extern "C" void launch_conv_relu_naive(const float* d_input,
     cudaDeviceSynchronize();
 }
 
+/**
+ * \brief Launch naive fused conv+LeakyReLU kernel.
+ *
+ * \param[in]  d_input  Device pointer to input image.
+ * \param[in]  d_kernel Device pointer to convolution kernel weights.
+ * \param[out] d_output Device pointer to output image.
+ * \param[in]  width    Image width in pixels.
+ * \param[in]  height   Image height in pixels.
+ * \param[in]  ksize    Kernel side length.
+ * \param[in]  alpha    Negative slope for LeakyReLU.
+ * \param[in]  block    CUDA block dimensions.
+ */
 extern "C" void launch_conv_leaky_relu_naive(const float* d_input,
                                               const float* d_kernel,
                                               float* d_output,
@@ -210,6 +233,17 @@ extern "C" void launch_conv_leaky_relu_naive(const float* d_input,
     cudaDeviceSynchronize();
 }
 
+/**
+ * \brief Launch tiled fused conv+ReLU kernel with shared memory.
+ *
+ * \param[in]  d_input  Device pointer to input image.
+ * \param[in]  d_kernel Device pointer to convolution kernel weights.
+ * \param[out] d_output Device pointer to output image.
+ * \param[in]  width    Image width in pixels.
+ * \param[in]  height   Image height in pixels.
+ * \param[in]  ksize    Kernel side length.
+ * \param[in]  block    CUDA block dimensions controlling tile size.
+ */
 extern "C" void launch_conv_relu_tiled(const float* d_input,
                                        const float* d_kernel,
                                        float* d_output,
@@ -221,6 +255,17 @@ extern "C" void launch_conv_relu_tiled(const float* d_input,
     cudaDeviceSynchronize();
 }
 
+/**
+ * \brief Launch naive fused conv+Sigmoid kernel.
+ *
+ * \param[in]  d_input  Device pointer to input image.
+ * \param[in]  d_kernel Device pointer to convolution kernel weights.
+ * \param[out] d_output Device pointer to output image.
+ * \param[in]  width    Image width in pixels.
+ * \param[in]  height   Image height in pixels.
+ * \param[in]  ksize    Kernel side length.
+ * \param[in]  block    CUDA block dimensions.
+ */
 extern "C" void launch_conv_sigmoid_naive(const float* d_input,
                                           const float* d_kernel,
                                           float* d_output,

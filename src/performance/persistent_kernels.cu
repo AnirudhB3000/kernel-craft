@@ -47,6 +47,19 @@ struct PersistentConfig {
 
 __shared__ PersistentConfig g_config;
 
+/**
+ * \brief Single-shot tiled convolution kernel for persistent-kernel mode.
+ *
+ * Implements the same shared-memory tiling as conv_tiled but is launched
+ * without cudaDeviceSynchronize so it can run inside a persistent worker loop.
+ *
+ * \param[in]  input  Device pointer to input image.
+ * \param[in]  kernel Device pointer to convolution weights.
+ * \param[out] output Device pointer to output image.
+ * \param[in]  width  Image width in pixels.
+ * \param[in]  height Image height in pixels.
+ * \param[in]  ksize  Kernel side length.
+ */
 __global__ void conv_tiled_persistent(const float* __restrict__ input,
                                       const float* __restrict__ kernel,
                                       float* __restrict__ output,
@@ -260,6 +273,11 @@ extern "C" int conv_work_enqueue(const float* d_input,
     return 0;
 }
 
+/**
+ * \brief Execute all enqueued convolution work items and clear the queue.
+ *
+ * \param[in] block CUDA block dimensions to use for each launch.
+ */
 extern "C" void conv_work_execute(dim3 block) {
     for (int i = 0; i < g_workCount; ++i) {
         conv_persistent_launch(
@@ -274,10 +292,28 @@ extern "C" void conv_work_execute(dim3 block) {
 g_workCount = 0;
 }
 
+/**
+ * \brief Discard all pending work items without executing them.
+ */
 extern "C" void conv_work_clear() {
     g_workCount = 0;
 }
 
+/**
+ * \brief Launch tiled convolution asynchronously on a specified CUDA stream.
+ *
+ * Allows overlapping convolution with memory transfers or other kernels by
+ * submitting the work to a non-default stream.
+ *
+ * \param[in]  d_input  Device pointer to input image.
+ * \param[in]  d_kernel Device pointer to convolution weights.
+ * \param[out] d_output Device pointer to output image.
+ * \param[in]  width    Image width in pixels.
+ * \param[in]  height   Image height in pixels.
+ * \param[in]  ksize    Kernel side length.
+ * \param[in]  block    CUDA block dimensions.
+ * \param[in]  stream   CUDA stream for asynchronous execution.
+ */
 extern "C" void conv_streaming(const float* d_input,
                                 const float* d_kernel,
                                 float* d_output,
