@@ -66,11 +66,6 @@ Example:
 | 16×16    | 18×18 = 324 floats | Medium images (1024×1024) |
 | 32×32    | 34×34 = 1156 floats | Large images, but overkill for small |
 
-**Key Observations:**
-- **8×8 tile**: Most consistent performer across all image sizes
-- **16×16 tile**: Good balance, slight overhead at small sizes
-- **32×32 tile**: Best for large images but overhead hurts small/medium
-
 **Conclusion**: 8×8 tile provides the best overall performance for this 3×3 kernel workload.
 
 ### Phase 7: Performance Infrastructure Results
@@ -113,7 +108,7 @@ Example:
 
 ---
 
-## Phase 8: Integration Enhancements Results
+### Phase 8: Integration Enhancements Results
 
 #### Async Stream Operations (Double-Buffering)
 
@@ -145,7 +140,7 @@ Example:
 
 ---
 
-## Phase 11: Transformer/LLM Inference Results
+### Phase 11: Transformer/LLM Inference Results
 
 #### FlashAttention (RTX 4070 Laptop, CUDA 12.0, Ada SM89)
 
@@ -207,7 +202,7 @@ Example:
 
 ---
 
-## Phase 6: Feature Extensions Results
+### Phase 6: Feature Extensions Results
 
 #### 3D Convolution
 
@@ -251,6 +246,42 @@ Example:
 
 ---
 
+### Phase 12: Full vLLM Integration Design Decisions
+
+#### Integration Architecture: ctypes bridge (Python-first)
+
+| Path | File | When to use |
+|------|------|-------------|
+| C++ extension | `src/tensorrt/vllm_plugin_wrapper.cpp` | Production: native CUDA tensor access |
+| Python ctypes | `src/python/kernel_craft_torch_ops.py` | Dev/testing: no recompile needed |
+
+**Key insight**: ctypes reads `data_ptr()` directly from torch CUDA tensors — no GPU→CPU roundtrip. Both paths call the same `extern "C"` launchers in `libkernels.so`.
+
+#### vLLM AttentionBackend design
+- Prefill (full sequence) → `launch_flash_attention` (tiled, causal, GQA)
+- Decode (single token) → `launch_paged_attention` (block table, non-contiguous cache)
+- KV cache shape: `[2, num_blocks, block_size, H_kv, d]` — index 0=K, index 1=V
+- Activation: `VLLM_ATTENTION_BACKEND=kernel_craft` env var or `kernel_craft_vllm_backend.register()`
+
+#### vLLM 0.21.0 v1 API (`vllm.v1.attention.backend`)
+- `get_kv_cache_shape(num_blocks, block_size, H_kv, head_size)` — new signature vs 0.5.x
+- `forward(layer, query, key, value, kv_cache, metadata, output, ...)` — output param added
+- `AttentionMetadataBuilder.build(common_prefix_len, common_attn_metadata, fast_build)` — new signature
+- No `swap_blocks`/`copy_blocks` on backend (handled by vLLM cache manager in v1)
+
+#### Plugin strategy
+- `vllm_plugin_wrapper.cpp` — TORCH_LIBRARY + TORCH_LIBRARY_IMPL; compiles with `-DHAVE_TORCH`
+- `paged_attention_plugin.cpp` — TensorRT IPluginV2DynamicExt; compiles with `-DHAVE_TENSORRT`
+- Both serve distinct deployment targets (PyTorch path vs TRT-LLM path)
+
+#### Environment notes
+- torch 2.11.0+cu130 + vLLM 0.21.0 confirmed working in `src/python/venv`
+- 8 GB VRAM limits usable models to: ≤3B fp16, or ≤8B with AWQ/GPTQ int4
+- WSL2 has no GPU peer-to-peer — tensor parallelism across GPUs not testable locally
+- Full test suite: 89 pass / 0 skip with venv (torch 2.11 + vLLM 0.21)
+
+---
+
 # 1. Core Objectives
 
 ## 1.1 Foundational Understanding
@@ -259,11 +290,7 @@ Develop a systems-level understanding of:
 
 * How convolution maps to GPU execution
 * Thread hierarchy (grid, block, warp)
-* Memory hierarchy:
-
-  * Global memory
-  * Shared memory
-  * Registers
+* Memory hierarchy (global, shared, registers)
 * Memory bandwidth vs compute bottlenecks
 
 ### Key Outcomes
@@ -278,129 +305,25 @@ Develop a systems-level understanding of:
 
 ## 2.1 Convolution Mechanics on GPU
 
-### Goals
+**Goals**: Implement naive convolution; optimize with shared memory tiling; reduce redundant global memory access.
 
-* Implement naive convolution kernel
-* Optimize using shared memory tiling
-* Reduce redundant global memory access
-
-### Tasks
-
-1. Implement baseline 2D convolution:
-
-   * One thread per output pixel
-   * Direct global memory access
-
-2. Optimize with tiling:
-
-   * Load input tiles into shared memory
-   * Handle halo regions
-   * Synchronize threads using `__syncthreads()`
-
-3. Analyze:
-
-   * Memory access patterns
-   * Coalescing efficiency
-   * Warp divergence
-
-### Deliverables
-
-* `kernels/core/conv_naive.cu`
-* `kernels/core/conv_tiled.cu`
-* Benchmark comparison
-
----
+**Key techniques**: Coalesced memory access, halo-region handling, `__syncthreads()`, tile size dispatch.
 
 ## 2.2 Memory Optimization
 
-### Goals
+**Goals**: Minimize global memory traffic; maximize shared memory reuse.
 
-* Minimize global memory traffic
-* Maximize shared memory reuse
-
-### Techniques
-
-* Coalesced memory access
-* Shared memory tiling
-* Register usage optimization
-
-### Experiments
-
-* Compare:
-
-  * Global-only vs shared memory kernels
-  * Different tile sizes
-
-* Measure:
-
-  * Bandwidth utilization
-  * Execution time
-
----
+**Techniques**: Coalesced access, shared memory tiling, register pressure management.
 
 ## 2.3 Custom Operations
 
-### Motivation
-
-Standard libraries do not support all operations efficiently.
-
-### Targets
-
-* Sparse convolution
-* Custom filter kernels
-* Domain-specific transforms
-
-### Tasks
-
-* Define a non-standard convolution variant
-* Implement CUDA kernel
-* Compare against dense fallback
-
-### Deliverables
-
-* `src/custom/custom_op.cu`
-* Performance report
-
----
+**Goal**: Non-standard convolution variants (sparse, custom filters, domain-specific transforms) not served efficiently by vendor libraries.
 
 ## 2.4 Fused Kernels
 
-### Motivation
+**Goal**: Reduce kernel launch overhead and memory transfers by fusing conv → batchnorm → relu into a single kernel.
 
-Reduce kernel launch overhead and memory transfers.
-
-### Target Pipeline
-
-Separate implementation:
-
-```
-conv -> batchnorm -> relu
-```
-
-Fused implementation:
-
-```
-single CUDA kernel performing all steps
-```
-
-### Tasks
-
-1. Implement individual kernels
-2. Implement fused kernel
-3. Compare:
-
-   * Kernel launch overhead
-   * Memory traffic
-   * Latency
-
-### Key Insight
-
-Memory movement dominates cost more than arithmetic.
-
-### Deliverables
-* `src/pipelines/preprocess_gpu.cu`
-* `src/pipelines/pipeline_full_gpu.cu`
-* Throughput analysis
+**Key Insight**: Memory movement dominates cost more than arithmetic.
 
 ---
 
@@ -408,17 +331,11 @@ Memory movement dominates cost more than arithmetic.
 
 ## 3.1 Metrics
 
-Track:
-
-* Execution time (ms)
-* Throughput (images/sec)
-* Memory bandwidth (GB/s)
-* GPU utilization
+Track: execution time (ms), throughput (images/sec), memory bandwidth (GB/s), GPU utilization.
 
 ## 3.2 Tools
 
-* CUDA events for timing
-* Profiling tools (Nsight Systems / Nsight Compute)
+CUDA events for timing; Nsight Systems / Nsight Compute for profiling.
 
 ## 3.3 Methodology
 
@@ -446,37 +363,54 @@ Track:
         conv_int8.cu        # INT8 quantized convolution
         bn_folding.cu       # BatchNorm folding
         conv_activation_fusion.cu  # Fused conv+activation
+      /transformer
+        flash_attention.cu  # MHA/GQA/MQA (Phase 11)
+        paged_attention.cu  # vLLM paged KV-cache (Phase 11)
+        quant_int4.cu       # INT4 dequant + GEMV (Phase 11)
+        fp8_quant.cu        # FP8 E4M3 quantization (Phase 11)
+        speculative_decoding.cu  # Draft token verification (Phase 11)
+        tensor_parallel.cu  # All-reduce / all-gather (Phase 11)
     /pipelines
       pipeline_fused.cu     # Fused conv+batchnorm+relu
-      pipeline_separate.cu   # Separate pipeline kernels
+      pipeline_separate.cu  # Separate pipeline kernels
       preprocess_gpu.cu     # GPU preprocessing
     /performance
       memory_pool.cu        # Pre-allocated memory pool
       cuda_graphs.cu        # CUDA Graphs integration
       mixed_precision.cu    # FP16/TF32 kernels
       persistent_kernels.cu # Persistent kernel mode
-    /custom
-      custom_op.cu          # Sparse convolution
+      async_streams.cu      # Double-buffered async streams
+      unified_memory.cu     # Unified memory with prefetch
+      multi_stream_pipeline.cu  # Concurrent preprocess+inference
     /tensorrt
-      plugin_wrapper.cpp    # TensorRT plugin wrappers
+      plugin_wrapper.cpp          # TensorRT CNN plugins
+      paged_attention_plugin.cpp  # TensorRT PagedAttention plugin
+      vllm_plugin_wrapper.cpp     # PyTorch custom ops (C++ path)
     /python
-      pybind_cuda.cpp       # Python bindings (pybind11)
+      pybind_cuda.cpp       # Python bindings: conv kernels
+      pybind_transformer.cpp # Python bindings: transformer kernels
+      kernel_craft_torch_ops.py    # ctypes bridge to libkernels.so
+      kernel_craft_vllm_backend.py # vLLM AttentionBackend
       pyproject.toml        # Package configuration
       tests/                # Python tests
 
   /benchmarks
     benchmark_conv.cpp
     benchmark_pipeline.cpp
+    benchmark_flash_attention.cpp
+    benchmark_paged_attention.cpp
+    benchmark_quant.cpp
+    benchmark_vllm_e2e.py
 
   /tests
     test_conv_naive.cpp
     test_conv_tiled.cpp
-
-  /examples
-    /cpp
-    /python
-
-  /data
+    test_flash_attention.cpp
+    test_paged_attention.cpp
+    test_fp8_quant.cpp
+    test_quant_int4.cpp
+    test_speculative_decoding.cpp
+    test_tensor_parallel.cpp
 
   CMakeLists.txt
   README.md
@@ -487,179 +421,80 @@ Track:
 
 # 5. Execution Plan
 
-## Phase 1: Foundations (Week 1-2)
+## Phase 1: Foundations (Week 1-2) ✅
+* Implement naive convolution, learn CUDA basics, benchmark CPU vs GPU.
 
-* Implement naive convolution
-* Learn CUDA basics
-* Benchmark CPU vs GPU
+## Phase 2: Optimization (Week 3-4) ✅
+* Implement tiled convolution, optimize memory usage, profile kernels.
 
-## Phase 2: Optimization (Week 3-4)
+## Phase 3: Advanced Kernels (Week 5-6) ✅
+* Build fused kernels, implement custom operations.
 
-* Implement tiled convolution
-* Optimize memory usage
-* Profile kernels
+## Phase 4: Systems Design (Week 7-8) ✅
+* Build full GPU pipeline, optimize preprocessing, run end-to-end benchmarks.
 
-## Phase 3: Advanced Kernels (Week 5-6)
+## Phase 5: Python Integration ✅
+* PyPI release workflow, pybind11 bindings, numpy/PyTorch support.
 
-* Build fused kernels
-* Implement custom operations
+## Phase 6: Feature Extensions ✅
+* 3D, dilated, transposed, and grouped convolution variants.
 
-## Phase 4: Systems Design (Week 7-8)
+## Phase 7: Performance Infrastructure ✅
+* CUDA graphs, memory pool, mixed precision (FP16/TF32), persistent kernels.
 
-* Build full GPU pipeline
-* Optimize preprocessing
-* Run end-to-end benchmarks
+## Phase 8: Integration Enhancements ✅
+* Async stream operations, unified memory, multi-stream pipeline.
 
-## Phase 10: ML Inference & TensorRT Support (CNN-First) (Week 9+) ✅ COMPLETE
-* **INT8 Quantized Convolution** (`src/kernels/inference/conv_int8.cu`) - Low-precision inference kernels with Tensor Cores support
-* **BatchNorm Folding** (`src/kernels/inference/bn_folding.cu`) - Pre-compute folded conv weights (eliminates BN layer)
-* **Conv+Activation Fusion** (`src/kernels/inference/conv_activation_fusion.cu`) - Fused conv + ReLU/LeakyReLU/Sigmoid
-* **TensorRT Plugin Wrappers** (`src/tensorrt/plugin_wrapper.cpp`) - Custom TensorRT plugins for CNN inference
-  - `ConvInt8Plugin` - INT8 quantized convolution plugin
-  - `ConvReLUPlugin` - Fused Conv+ReLU plugin
-  - `ConvInt8PluginCreator` & `ConvReLUPluginCreator` - Plugin registration
-  - Proper kernel weight management via `setKernelWeights()`
-* **Python Bindings for Phase 10** (`src/python/pybind_cuda.cpp`)
-  - `conv_int8_naive()` - INT8 quantized convolution
-  - `bn_folding()` - BatchNorm folding (returns folded weights + bias)
-  - `conv_relu()` - Fused Conv+ReLU (naive/tiled)
-  - `compute_quantization_scale()` - Compute INT8 scale factors
-* **Enhanced Tests**:
-  - C++: Added tests for INT8 (large values, 5x5 kernel), BN folding (no bias, larger channels), Conv+Activation (Sigmoid)
-  - Python: 13 new tests for Phase 10 kernels (49 total, 6 skipped)
-  - Fixed pybind11 stride bug in BN folding Python binding
-* Document TensorRT integration workflows for vision model deployment
-* (Deferred) Transformer/LLM inference optimizations for vLLM integration
+## Phase 9: Additional Framework Support (Optional) — Pending
+* JAX, ONNX Runtime, or TensorFlow integration options.
 
----
+## Phase 10: ML Inference & TensorRT Support (CNN-First) ✅ COMPLETE
+* **INT8 Quantized Convolution** (`src/kernels/inference/conv_int8.cu`)
+* **BatchNorm Folding** (`src/kernels/inference/bn_folding.cu`)
+* **Conv+Activation Fusion** (`src/kernels/inference/conv_activation_fusion.cu`)
+* **TensorRT Plugin Wrappers** (`src/tensorrt/plugin_wrapper.cpp`)
+  - `ConvInt8Plugin`, `ConvReLUPlugin`, and their plugin creators
+* **Python Bindings**: `conv_int8_naive()`, `bn_folding()`, `conv_relu()`, `compute_quantization_scale()`
+* **Tests**: C++ (INT8 large values, 5x5 kernel, BN no-bias, Sigmoid fusion) + Python (13 tests, 49 total)
 
-## Phase 11: Transformer/LLM Inference Optimizations for vLLM Integration ✅ COMPLETE
+## Phase 11: Transformer/LLM Inference Optimizations ✅ COMPLETE
 
-### Motivation
-Extend kernel-craft beyond CNNs to support Transformer-based LLM inference pipelines, specifically targeting vLLM integration for high-throughput serving.
+### 11.1 FlashAttention Kernels
+* MHA/GQA/MQA in `src/kernels/transformer/flash_attention.cu` — online softmax, causal masking, H_kv parameter for GQA
+* 5 tests; benchmark: ~675–985 Gflops on RTX 4070
 
-### Goals
-* Implement optimized attention mechanisms (FlashAttention, PagedAttention)
-* Develop KV-cache management kernels
-* Add LLM-specific quantization (INT4, GPTQ, AWQ)
-* Create tensor parallelism and speculative decoding kernels
+### 11.2 vLLM PagedAttention
+* `src/kernels/transformer/paged_attention.cu` — block table lookup, variable seq lengths
+* `src/tensorrt/paged_attention_plugin.cpp` — TensorRT IPluginV2DynamicExt
+* 3 tests; decode: 0.13–0.48ms for seq 256–1024
 
-### Tasks
+### 11.3 LLM Quantization Kernels
+* `src/kernels/transformer/quant_int4.cu` — GPTQ/AWQ-style 2×INT4/byte, per-group scales
+* `src/kernels/transformer/fp8_quant.cu` — E4M3, per-token/per-tensor scaling, SmoothQuant smoothing
+* 7 tests total; INT4 dequant ~195 GB/s; FP8 ~5.8% mean rel error
 
-#### 11.1 FlashAttention Kernels
-* **Multi-Head Attention (MHA)** - Optimized attention without materializing large attention matrices
-* **Grouped-Query Attention (GQA)** - Support for Llama 2/3, Mistral architectures
-* **Multi-Query Attention (MQA)** - Single KV head for Falcon-style models
-* Deliverables: `src/kernels/transformer/flash_attention.cu`, `src/kernels/transformer/gqa_attention.cu`
+### 11.4 Advanced Inference Features
+* `src/kernels/transformer/speculative_decoding.cu` — rejection sampling verification
+* `src/kernels/transformer/tensor_parallel.cu` — ring all-reduce + all-gather (single-GPU simulation)
+* 9 tests total
 
-#### 11.2 vLLM PagedAttention Integration
-* **PagedAttention Kernel** - Non-contiguous KV-cache access patterns for vLLM
-* **Blocked KV-Cache Management** - Memory-efficient cache allocation
-* **Prefix Caching Support** - Reuse shared prompt prefixes
-* Deliverables: `src/kernels/transformer/paged_attention.cu`, `src/tensorrt/paged_attention_plugin.cpp`
+### 11.5 Python Bindings & vLLM Plugin
+* `src/python/pybind_transformer.cpp` — exposes flash_attention, paged_attention, quant_int4_dequant, fp8_quantize/dequantize, speculative_decode
+* `src/tensorrt/vllm_plugin_wrapper.cpp` — TORCH_LIBRARY registration for C++ path
+* 17 pytest tests pass
 
-#### 11.3 LLM Quantization Kernels
-* **INT4 Weight Quantization** - GPTQ/AWQ-style quantized weights
-* **Activation Quantization** - SmoothQuant, FP8 for activations
-* **Dynamic Quantization** - Per-token or per-channel scaling
-* Deliverables: `src/kernels/transformer/quant_int4.cu`, `src/kernels/transformer/fp8_quant.cu`
+## Phase 12: Full vLLM Integration ✅ SUBSTANTIALLY COMPLETE
 
-#### 11.4 Advanced Inference Features
-* **Speculative Decoding** - Draft model verification kernels
-* **Tensor Parallelism** - All-reduce and All-gather primitives
-* **Continuous Batching** - Dynamic sequence addition/removal
-* Deliverables: `src/kernels/transformer/speculative_decoding.cu`, `src/kernels/transformer/tensor_parallel.cu`
+### Deliverables
+* `src/python/kernel_craft_torch_ops.py` — ctypes bridge covering all 6 kernel families
+* `src/python/kernel_craft_vllm_backend.py` — KernelCraftAttentionBackend (vLLM 0.21.0 v1 API)
+* `benchmarks/benchmark_vllm_e2e.py` — kernel-only + full vLLM TTFT/throughput/VRAM benchmark
+* `src/python/tests/test_vllm_backend.py` — 17 tests; all pass with torch 2.11+cu130 + vLLM 0.21.0
+* Full Python test suite: **89 pass / 0 skip** with venv
 
-#### 11.5 Python Bindings & vLLM Plugin
-* Expose attention kernels to Python
-* Create vLLM custom ops integration
-* Benchmark against vLLM baseline
-* Deliverables: `src/python/pybind_transformer.cpp`, `src/tensorrt/vllm_plugin_wrapper.cpp`
-
-### Success Criteria
-* FlashAttention achieves >80% of theoretical memory bandwidth ✅ (~700-985 Gflops)
-* PagedAttention integrates with vLLM without performance regression ✅ (kernel validated)
-* INT4 quantization maintains <1% accuracy drop on standard benchmarks ✅ (<5.8% FP8)
-* Speculative decoding provides >1.5x speedup for supported models ✅ (rejection sampling correct)
-
----
-
-## Phase 12: Full vLLM Integration — IN PROGRESS 🔄
-
-The CUDA kernels for Phase 11 are implemented. This phase wires them into a live vLLM installation so kernel-craft ops replace vLLM's built-in attention/quantization kernels.
-
-### Phase 12 Design Decisions
-
-#### Integration Architecture: ctypes bridge (Python-first)
-Two paths exist for exposing kernel-craft ops to PyTorch:
-
-| Path | File | When to use |
-|------|------|-------------|
-| C++ extension | `src/tensorrt/vllm_plugin_wrapper.cpp` | Production: native CUDA tensor access |
-| Python ctypes | `src/python/kernel_craft_torch_ops.py` | Dev/testing: no recompile needed |
-
-**Key insight**: ctypes reads `data_ptr()` directly from torch CUDA tensors — no GPU→CPU roundtrip. Both paths call the same `extern "C"` launchers in `libkernels.so`.
-
-#### vLLM AttentionBackend design
-- Prefill (full sequence) → `launch_flash_attention` (tiled, causal, GQA)
-- Decode (single token) → `launch_paged_attention` (block table, non-contiguous cache)
-- KV cache shape: `[2, num_blocks, block_size, H_kv, d]` — index 0=K, index 1=V
-- Activation: `VLLM_ATTENTION_BACKEND=kernel_craft` env var or `kernel_craft_vllm_backend.register()`
-
-#### Plugin status decision
-- `vllm_plugin_wrapper.cpp` — **kept and completed**: TORCH_LIBRARY + TORCH_LIBRARY_IMPL for C++ path; compiles with `-DHAVE_TORCH`
-- `paged_attention_plugin.cpp` — **kept and completed**: full TensorRT IPluginV2DynamicExt; compiles with `-DHAVE_TENSORRT`
-- Decision: both serve distinct deployment targets (PyTorch path vs TRT-LLM path); neither removed
-
-### Phase 12 Deliverables (Completed 2026-05-16)
-
-#### Step 6: Python Test Suite ✅
-- `src/python/tests/test_transformer_bindings.py` — 17 tests all pass
-- `src/python/tests/test_vllm_backend.py` — 17 tests (10 torch-ops + 7 vLLM interface);
-  all 17 pass with torch 2.11+cu130 + vLLM 0.21.0; gracefully skip when torch/vLLM absent
-- Updated from vLLM 0.5.x API to vLLM 0.21.0 v1 API (`vllm.v1.attention.backend`):
-  - `get_kv_cache_shape(num_blocks, block_size, H_kv, head_size)` — new signature
-  - `forward(layer, query, key, value, kv_cache, metadata, output, ...)` — output param added
-  - No `swap_blocks`/`copy_blocks` on backend (handled by vLLM cache manager in v1)
-  - `AttentionMetadataBuilder.build(common_prefix_len, common_attn_metadata, fast_build)` — new signature
-
-#### Steps 1 & 3: vLLM Backend + Quantization Hook ✅
-- `src/python/kernel_craft_vllm_backend.py`:
-  - `KernelCraftAttentionBackend(AttentionBackend)` — full vLLM 0.5.x interface
-  - `KernelCraftAttentionImpl`: prefill→FlashAttention, decode→PagedAttention
-  - `KernelCraftMetadata` + `KernelCraftMetadataBuilder`
-  - `swap_blocks` / `copy_blocks` for KV-cache offloading and prefix sharing
-- `src/python/kernel_craft_torch_ops.py`:
-  - ctypes bridge to `libkernels.so` for all 6 kernel families
-  - Optional `torch.library` registration: `torch.ops.kernel_craft.*`
-  - Covers INT4 (`int4_dequantize`, `int4_gemv`), FP8 (`fp8_quantize`, `fp8_dequantize`),
-    attention (`flash_attention`, `paged_attention`), speculative (`speculative_verify`)
-
-#### Step 7: End-to-End Benchmark ✅
-- `benchmarks/benchmark_vllm_e2e.py`:
-  - Kernel-only mode (no vLLM): benchmarks FlashAttention TFLOPS + PagedAttention BW
-  - Full mode (with vLLM): TTFT, tokens/s, peak VRAM vs default backend
-  - CLI: `--model`, `--quantization`, `--batch-sizes`, `--kernels-only`, `--backends`
-
-#### Step 8: Plugin Wrapper Review ✅
-- `src/tensorrt/vllm_plugin_wrapper.cpp` — complete C++ PyTorch custom op
-- `src/tensorrt/paged_attention_plugin.cpp` — complete TensorRT IPluginV2DynamicExt
-- `src/python/pyproject.toml` — added `[vllm]` and `[torch]` optional dependency groups
-
-### Pending (environment upgrade required)
-
-| Task | Blocker |
-|------|---------|
-| Install vLLM | CUDA toolkit ≥12.1 (current: 12.0) |
-| Full E2E benchmark vs vLLM default | Need model download + GPU time |
-| Tensor parallel with NCCL | No multi-GPU on WSL2 |
-
-### Notes
-- torch 2.11.0+cu130 + vLLM 0.21.0 confirmed working in `src/python/venv`
-- 8 GB VRAM limits usable models to: ≤3B fp16, or ≤8B with AWQ/GPTQ int4
-- WSL2 has no GPU peer-to-peer — tensor parallelism across GPUs is not testable locally
-- vLLM API pinned to 0.21.0 v1 (`vllm.v1.attention.backend`); re-validate if vLLM version changes
-- Full test suite: 89 pass / 0 skip with venv (torch 2.11 + vLLM 0.21)
+### Remaining
+* Run full E2E benchmark with a downloaded model (`facebook/opt-125m` or similar)
+* Multi-GPU tensor parallelism — deferred (WSL2, no peer-to-peer)
 
 ---
 
@@ -680,11 +515,7 @@ You should be able to:
 * Beating highly optimized vendor libraries in general cases
 * Building production-grade ML frameworks
 
-Focus is on:
-
-* Understanding
-* Experimentation
-* Measurable optimization
+Focus is on understanding, experimentation, and measurable optimization.
 
 ---
 
@@ -693,191 +524,5 @@ Focus is on:
 * Prioritize clarity over premature optimization
 * Always validate correctness before optimizing
 * Profile before making assumptions
-* **pybind11 Note**: When returning numpy arrays from C++, avoid `py::array_t` with pointer + shape (causes stride=0 bug). Use `std::vector` and list conversion instead, or `py::array_t` with vector (copy).
-
----
-
-# 9. Python Extension (numpy / PyTorch)
-
-## 9.1 Motivation
-
-Enable real-world training workflows by exposing CUDA kernels to Python ML training pipelines.
-
-## 9.2 Goals
-
-1. Add pybind11 via CMake FetchContent (auto-download, no pip install)
-2. Expose `conv_naive` and `conv_tiled` to Python
-3. Support numpy array input/output
-4. Support PyTorch tensor input/output on GPU
-5. Expose `tile_w` and `tile_h` as runtime parameters
-
-## 9.3 API Design
-
-```python
-import kernel_craft
-
-# numpy arrays
-out = kernel_craft.conv_naive(input, kernel)      # -> np.ndarray
-out = kernel_craft.conv_tiled(input, kernel, tile_w=8, tile_h=8)  # -> np.ndarray
-
-# PyTorch tensors (CUDA)
-out = kernel_craft.conv_naive(tensor, kernel)    # -> torch.Tensor on GPU
-out = kernel_craft.conv_tiled(tensor, kernel, tile_w=16, tile_h=16)  # -> torch.Tensor on GPU
-```
-
-## 9.4 Implementation Tasks
-
-### Task 1: Update CMakeLists.txt
-
-Add pybind11 FetchContent and Python extension target:
-
-```cmake
-include(FetchContent)
-FetchContent_Declare(pybind11 GIT_REPOSITORY https://github.com/pybind/pybind11.git GIT_TAG v2.11.1)
-FetchContent_MakeAvailable(pybind11)
-pybind11_add_module(kernel_craft src/python/pybind_cuda.cpp src/kernels/core/conv_naive.cu src/kernels/core/conv_tiled.cu)
-```
-
-### Task 2: Create src/pybind_cuda.cpp
-
-Bind functions:
-
-- `conv_naive(input: np.ndarray, kernel: np.ndarray) -> np.ndarray`
-- `conv_tiled(input: np.ndarray, kernel: np.ndarray, tile_w: int, tile_h: int) -> np.ndarray`
-- `conv_naive(input: Tensor, kernel: Tensor) -> Tensor`  (PyTorch overload)
-- `conv_tiled(input: Tensor, kernel: Tensor, tile_w: int, tile_h: int) -> Tensor`  (PyTorch overload)
-
-Handle memory transfer:
-
-- numpy: copy host->device, run kernel, copy device->host, return numpy array
-- torch: extract data pointer, run kernel, wrap result in new tensor on GPU
-
-### Task 3: Support tile_w/tile_h runtime params
-
-The tiled kernel requires compile-time tile size for shared memory. Two approaches:
-
-1. Compile multiple kernel variants (8x8, 16x16, 32x32) and dispatch at runtime
-2. Use runtime tile size with dynamic shared memory allocation
-
-## 9.5 Deliverables
-
-* `src/python/pybind_cuda.cpp` - pybind11 module (~480 lines)
-* CMakeLists.txt updated with Python extension target
-* `src/python/pyproject.toml` - package configuration
-* `src/python/README.md` - user-facing documentation
-* `src/python/tests/test_bindings.py` - 13 Python tests
-
-## 9.6 Build & Test
-
-```bash
-cd src/python
-python -m build
-
-# Or with CMake
-mkdir build && cd build
-cmake ..
-make kernel_craft_python
-```
-
-## 9.7 Verification
-
-- [x] Module imports without error
-- [x] numpy arrays produce correct output
-- [x] PyTorch tensors produce correct output on GPU
-- [x] `tile_w`/`tile_h` parameters work via runtime dispatch
-
----
-
-## 10. Python Package Distribution
-
-### Motivation
-
-Enable easy installation via pip/PyPI for real-world use cases.
-
-### Tasks
-
-1. Create `src/python/pyproject.toml` for pip packaging
-2. Configure Python package to include pre-built `.so` file
-3. Add Python test suite in `src/python/tests/test_bindings.py`
-4. Create Python examples in `examples/python/`
-5. Document publishing steps
-
-### Results
-
-- Created `pyproject.toml` with build system and dependencies
-- Python package includes pre-compiled `.so` for Python 3.12
-- 13 Python tests pass (numpy + PyTorch)
-- 4 example scripts demonstrating numpy/PyTorch usage
-
-### Publishing
-
-```bash
-# Build
-cd src/python
-python -m build
-
-# Upload to TestPyPI
-twine upload --repository testpypi dist/*
-
-# Test installation
-pip install --index-url https://test.pypi.org/simple/ kernel-craft
-
-# Upload to PyPI
-twine upload dist/*
-```
-
----
-
-## 11. PyPI Release Workflow
-
-### Motivation
-
-Manual release workflow for PyPI distribution with configurable version bumps.
-
-### Workflow Design
-
-| Trigger | Input | Runner |
-|---------|-------|--------|
-| `workflow_dispatch` (manual) | patch / minor / major | self-hosted (GPU) |
-
-### Features
-
-- Clears old distributions from `src/python/dist/` before build
-- Builds and runs C++ tests (ctest)
-- Builds and runs Python tests (pytest)
-- Configurable version bump via workflow input
-- Auto-upload to TestPyPI after successful build
-
-### Usage
-
-```bash
-# Trigger via GitHub UI:
-# 1. Go to Actions → Release
-# 2. Select "Run workflow"
-# 3. Choose version type: patch/minor/major
-# 4. Click "Run workflow"
-```
-
-```bash
-# Or via GitHub CLI:
-gh workflow run release.yml -f version_type=patch
-```
-
-### Configuration
-
-Required secrets:
-- `TWINE_PASSWORD`: PyPI/TestPyPI API token
-
-### Publishing to Production PyPI
-
-After testing on TestPyPI, upload to production:
-
-```bash
-cd src/python
-twine upload dist/*
-```
-
----
-
-End of AGENTS.md
-
+* **pybind11**: When returning numpy arrays from C++, avoid `py::array_t` with pointer + shape (causes stride=0 bug). Use `std::vector` and list conversion, or `py::array_t` with vector (copy).
+* **PyPI release**: `gh workflow run release.yml -f version_type=patch|minor|major` — workflow in `.github/workflows/release.yml`; requires `testpypi_token` and `pypi_token` secrets.
