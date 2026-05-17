@@ -34,13 +34,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cuda/cache
-          key: ${{ runner.os }}-cuda-cache-${{ hashFiles('src/*.cu') }}
+          key: ${{ runner.os }}-cuda-cache-${{ hashFiles('**/*.cu') }}
           restore-keys: |
             ${{ runner.os }}-cuda-cache-
 
       - name: Install build dependencies
         run: |
-          which cmake || sudo apt-get update && sudo apt-get install -y cmake make python3 python3-pip python3-venv git
+          which cmake || { sudo apt-get update && sudo apt-get install -y cmake make python3 python3-pip python3-venv git; }
 
       - name: Set up Python
         run: |
@@ -102,7 +102,7 @@ jobs:
 
       - name: Clear dist directory
         working-directory: src/python
-        run: rm -rf dist/*
+        run: rm -rf dist && mkdir -p dist
 
       - name: Build Python module
         working-directory: src/python
@@ -110,9 +110,8 @@ jobs:
 
       - name: Run Python tests
         working-directory: src/python
-        env:
-          PYTHONPATH: "$(pwd)/kernel_craft_python"
         run: |
+          /tmp/releasevenv/bin/pip install dist/*.whl
           /tmp/releasevenv/bin/python -m pytest tests/ -v
 
       - name: Upload to TestPyPI
@@ -122,8 +121,25 @@ jobs:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.testpypi_token }}
 
+      - name: Save dist for PyPI job
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: src/python/dist/
+
+  publish-pypi:
+    needs: kernel-snake-release
+    runs-on: self-hosted
+    environment: pypi-production
+
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
       - name: Upload to PyPI
-        working-directory: src/python
         run: /tmp/releasevenv/bin/twine upload dist/*
         env:
           TWINE_USERNAME: __token__

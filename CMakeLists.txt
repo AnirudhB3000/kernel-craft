@@ -183,6 +183,25 @@ target_link_libraries(test_unified_memory PRIVATE kernels)
 add_executable(test_multi_stream_pipeline tests/test_multi_stream_pipeline.cpp)
 target_link_libraries(test_multi_stream_pipeline PRIVATE kernels)
 
+# Phase 11: Transformer/LLM inference tests
+add_executable(test_flash_attention tests/test_flash_attention.cpp)
+target_link_libraries(test_flash_attention PRIVATE kernels)
+
+add_executable(test_paged_attention tests/test_paged_attention.cpp)
+target_link_libraries(test_paged_attention PRIVATE kernels)
+
+add_executable(test_quant_int4 tests/test_quant_int4.cpp)
+target_link_libraries(test_quant_int4 PRIVATE kernels)
+
+add_executable(test_fp8_quant tests/test_fp8_quant.cpp)
+target_link_libraries(test_fp8_quant PRIVATE kernels)
+
+add_executable(test_speculative_decoding tests/test_speculative_decoding.cpp)
+target_link_libraries(test_speculative_decoding PRIVATE kernels)
+
+add_executable(test_tensor_parallel tests/test_tensor_parallel.cpp)
+target_link_libraries(test_tensor_parallel PRIVATE kernels)
+
 # Test executable for TensorRT plugin (only if TensorRT is available)
 if(HAVE_TENSORRT)
     add_executable(test_tensorrt_plugin tests/test_tensorrt_plugin.cpp
@@ -236,6 +255,23 @@ target_link_libraries(benchmark_unified_memory PRIVATE kernels)
 add_executable(benchmark_multi_stream_pipeline benchmarks/benchmark_multi_stream_pipeline.cpp)
 target_link_libraries(benchmark_multi_stream_pipeline PRIVATE kernels)
 
+# Phase 11: Transformer/LLM inference benchmarks
+add_executable(benchmark_flash_attention benchmarks/benchmark_flash_attention.cpp)
+target_link_libraries(benchmark_flash_attention PRIVATE kernels)
+
+add_executable(benchmark_paged_attention benchmarks/benchmark_paged_attention.cpp)
+target_link_libraries(benchmark_paged_attention PRIVATE kernels)
+
+add_executable(benchmark_quant benchmarks/benchmark_quant.cpp)
+target_link_libraries(benchmark_quant PRIVATE kernels)
+
+# Phase 11: Python transformer module (separate pybind11 extension)
+pybind11_add_module(kernel_craft_transformer src/python/pybind_transformer.cpp)
+target_link_libraries(kernel_craft_transformer PRIVATE kernels CUDA::cudart)
+set_target_properties(kernel_craft_transformer PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${PYTHON_MODULE_OUTPUT_DIR}
+)
+
 # Enable CTest BEFORE registering tests
 include(CTest)
 enable_testing()
@@ -264,6 +300,14 @@ add_test(NAME async_streams_test COMMAND test_async_streams)
 add_test(NAME unified_memory_test COMMAND test_unified_memory)
 add_test(NAME multi_stream_pipeline_test COMMAND test_multi_stream_pipeline)
 
+# Phase 11: Transformer/LLM inference tests
+add_test(NAME flash_attention_test COMMAND test_flash_attention)
+add_test(NAME paged_attention_test COMMAND test_paged_attention)
+add_test(NAME quant_int4_test COMMAND test_quant_int4)
+add_test(NAME fp8_quant_test COMMAND test_fp8_quant)
+add_test(NAME speculative_decoding_test COMMAND test_speculative_decoding)
+add_test(NAME tensor_parallel_test COMMAND test_tensor_parallel)
+
 # Register all benchmarks as tests
 add_test(NAME benchmark_conv COMMAND benchmark_conv)
 add_test(NAME benchmark_custom COMMAND benchmark_custom)
@@ -279,17 +323,22 @@ add_test(NAME benchmark_async_streams COMMAND benchmark_async_streams)
 add_test(NAME benchmark_unified_memory COMMAND benchmark_unified_memory)
 add_test(NAME benchmark_multi_stream_pipeline COMMAND benchmark_multi_stream_pipeline)
 
+# Phase 11 benchmarks
+add_test(NAME benchmark_flash_attention COMMAND benchmark_flash_attention)
+add_test(NAME benchmark_paged_attention COMMAND benchmark_paged_attention)
+add_test(NAME benchmark_quant COMMAND benchmark_quant)
+
 # Convenience target that runs all registered tests and shows a concise summary
 add_custom_target(run_tests
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-    DEPENDS test_conv_naive test_conv_tiled test_preprocess test_pipeline test_custom_op test_memory_pool test_cuda_graphs test_mixed_precision test_persistent_kernels test_conv_int8 test_bn_folding test_conv_activation_fusion test_async_streams test_unified_memory test_multi_stream_pipeline
+    DEPENDS test_conv_naive test_conv_tiled test_preprocess test_pipeline test_custom_op test_memory_pool test_cuda_graphs test_mixed_precision test_persistent_kernels test_conv_int8 test_bn_folding test_conv_activation_fusion test_async_streams test_unified_memory test_multi_stream_pipeline test_flash_attention test_paged_attention test_quant_int4 test_fp8_quant test_speculative_decoding test_tensor_parallel
     COMMENT "Running all unit tests via CTest"
 )
 
 # Convenience target to run only benchmarks via CTest (provides summary)
 add_custom_target(run_benchmarks
     COMMAND ${CMAKE_CTEST_COMMAND} -R benchmark_ --output-on-failure
-    DEPENDS benchmark_conv benchmark_custom benchmark_pipeline benchmark_full_pipeline benchmark_memory_pool benchmark_cuda_graphs benchmark_mixed_precision benchmark_persistent_kernels benchmark_async_streams benchmark_unified_memory benchmark_multi_stream_pipeline
+    DEPENDS benchmark_conv benchmark_custom benchmark_pipeline benchmark_full_pipeline benchmark_memory_pool benchmark_cuda_graphs benchmark_mixed_precision benchmark_persistent_kernels benchmark_async_streams benchmark_unified_memory benchmark_multi_stream_pipeline benchmark_flash_attention benchmark_paged_attention benchmark_quant
     COMMENT "Running all benchmarks via CTest"
 )
 
