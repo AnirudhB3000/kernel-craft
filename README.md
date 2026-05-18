@@ -1,110 +1,148 @@
 # kernel-craft
 
-CUDA kernels for machine learning training & inference-time optimization (CNN-first for vision models, extensible to LLMs).
+CUDA kernels for machine learning training and inference-time optimization — convolution (CNN), transformer attention (LLM), and vLLM integration.
+
+## Hardware Requirements
+
+| Requirement | Minimum | Tested On |
+|-------------|---------|-----------|
+| GPU architecture | SM 6.0 (Pascal) | SM 8.9 (Ada, RTX 4070 Laptop) |
+| VRAM | 4 GB | 8 GB |
+| CUDA Toolkit | 11.8 | 12.0 / 12.3 |
+| OS | Linux x86-64 | Ubuntu 22.04 / WSL2 |
+
+**Architecture notes:**
+- SM 7.0+ (Volta) required for FP16 Tensor Cores (`mixed_precision.cu`)
+- SM 8.0+ (Ampere) required for TF32 and INT4 Tensor Core paths (`quant_int4.cu`)
+- SM 8.9+ (Ada) required for FP8 E4M3 (`fp8_quant.cu`) — falls back to FP32 simulation on older hardware
+- Multi-GPU tensor parallelism requires peer-to-peer access (not available on WSL2)
+
+## Prerequisites
+
+```
+cmake >= 3.18
+CUDA Toolkit >= 11.8
+g++ >= 9 (C++17)
+Python 3.11 or 3.12   # for Python bindings and vLLM backend
+```
+
+TensorRT is optional — detected automatically if `TENSORRT_ROOT` is set.
+
+## Setup
+
+### 1. Clone and build (C++ + CUDA kernels)
+
+```bash
+git clone https://github.com/anomalyco/kernel-craft.git
+cd kernel-craft
+mkdir build && cd build
+cmake ..
+make -j$(nproc)
+```
+
+To build with TensorRT plugin support:
+
+```bash
+cmake .. -DTENSORRT_ROOT=/path/to/TensorRT
+make -j$(nproc)
+```
+
+### 2. Python bindings
+
+The pybind11 extension is built automatically by CMake and placed in
+`src/python/kernel_craft_python/`. Install directly from the build tree:
+
+```bash
+pip install -e src/python
+```
+
+Or install from PyPI (pre-built wheel, no CUDA build step):
+
+```bash
+pip install kernel-craft
+```
+
+Requires: Python 3.11–3.12, numpy, CUDA runtime on PATH.
+
+### 3. vLLM backend (optional)
+
+The vLLM attention backend requires a specific torch + vLLM combination.
+Use the provided venv to avoid conflicts with system packages:
+
+```bash
+cd src/python
+python -m venv venv
+source venv/bin/activate
+pip install torch==2.11.0 --extra-index-url https://download.pytorch.org/whl/cu130
+pip install vllm==0.21.0
+pip install -e .
+```
+
+The ctypes bridge (`kernel_craft_torch_ops.py`) reads `libkernels.so` from the
+CMake build directory. Make sure the C++ build is complete before activating the
+backend.
 
 ## Features
 
 ### Core Convolution Kernels
 
-- **Naive Convolution** (`src/kernels/core/conv_naive.cu`) - Baseline 2D convolution with one thread per output pixel
-- **Tiled Convolution** (`src/kernels/core/conv_tiled.cu`) - Optimized using shared memory tiling for better memory bandwidth
+- **Naive Convolution** (`src/kernels/core/conv_naive.cu`) — baseline 2D, one thread per output pixel
+- **Tiled Convolution** (`src/kernels/core/conv_tiled.cu`) — shared memory tiling, 8×8/16×16/32×32 dispatch
 
 ### Convolution Variants
 
-- **3D Convolution** (`src/kernels/variants/conv3d.cu`) - Volumetric convolution for 3D data
-- **Dilated Convolution** (`src/kernels/variants/conv_dilated.cu`) - Expanded receptive field without parameter increase
-- **Transposed Convolution** (`src/kernels/variants/conv_transposed.cu`) - Upsampling via strided expansion
-- **Grouped Convolution** (`src/kernels/variants/conv_grouped.cu`) - Channel-grouped convolutions (ResNeXt-style)
-- **Sparse Convolution** (`src/custom/custom_op.cu`) - Coordinate-list format for sparse inputs
+- **3D Convolution** (`src/kernels/variants/conv3d.cu`) — volumetric
+- **Dilated Convolution** (`src/kernels/variants/conv_dilated.cu`) — expanded receptive field without parameter increase
+- **Transposed Convolution** (`src/kernels/variants/conv_transposed.cu`) — upsampling via strided expansion
+- **Grouped Convolution** (`src/kernels/variants/conv_grouped.cu`) — ResNeXt-style channel groups
+- **Sparse Convolution** (`src/custom/custom_op.cu`) — coordinate-list format for sparse inputs
 
-### Inference-Optimized Kernels
+### Inference-Optimized CNN Kernels
 
-- **INT8 Quantized Convolution** (`src/kernels/inference/conv_int8.cu`) - Low-precision inference kernels with Tensor Cores support
-- **BatchNorm Folding** (`src/kernels/inference/bn_folding.cu`) - Pre-compute folded conv weights for inference (eliminates BN layer)
-- **Conv+Activation Fusion** (`src/kernels/inference/conv_activation_fusion.cu`) - Fused conv + ReLU/LeakyReLU/Sigmoid for inference
+- **INT8 Quantized Convolution** (`src/kernels/inference/conv_int8.cu`) — low-precision with Tensor Core support
+- **BatchNorm Folding** (`src/kernels/inference/bn_folding.cu`) — folds BN weights into conv at inference time
+- **Conv+Activation Fusion** (`src/kernels/inference/conv_activation_fusion.cu`) — fused conv + ReLU/LeakyReLU/Sigmoid
+
+### Transformer / LLM Kernels
+
+- **FlashAttention** (`src/kernels/transformer/flash_attention.cu`) — tiled MHA/GQA/MQA with online softmax and causal masking
+- **PagedAttention** (`src/kernels/transformer/paged_attention.cu`) — attention over non-contiguous paged KV-cache (vLLM-style block tables)
+- **INT4 Dequant + GEMV** (`src/kernels/transformer/quant_int4.cu`) — GPTQ/AWQ-style 2×INT4 packed per byte, per-group scales
+- **FP8 Quantization** (`src/kernels/transformer/fp8_quant.cu`) — E4M3 format, per-token/per-channel scaling, SmoothQuant-compatible
+- **Speculative Decoding** (`src/kernels/transformer/speculative_decoding.cu`) — rejection-sampling draft token verification
+- **Tensor Parallelism** (`src/kernels/transformer/tensor_parallel.cu`) — ring all-reduce and all-gather primitives
 
 ### Pipeline Kernels
 
-- **Fused Pipeline** (`src/pipelines/pipeline_fused.cu`) - Conv + BatchNorm + ReLU in single kernel
-- **Separate Pipeline** (`src/pipelines/pipeline_separate.cu`) - Individual pipeline kernels
-- **GPU Preprocessing** (`src/pipelines/preprocess_gpu.cu`) - Resize, normalize, flip operations on GPU for training data pipelines
+- **Fused Pipeline** (`src/pipelines/pipeline_fused.cu`) — conv + batchnorm + relu in a single kernel
+- **Separate Pipeline** (`src/pipelines/pipeline_separate.cu`) — individual pipeline stages
+- **GPU Preprocessing** (`src/pipelines/preprocess_gpu.cu`) — resize, normalize, flip on GPU
 
-### Performance Optimization
+### Performance Infrastructure
 
-- **Memory Pool** (`src/performance/memory_pool.cu`) - Pre-allocated buffers to eliminate cudaMalloc/cudaFree overhead
-- **CUDA Graphs** (`src/performance/cuda_graphs.cu`) - Captured kernel DAG for reduced launch overhead
-- **Mixed Precision** (`src/performance/mixed_precision.cu`) - FP16/TF32 kernels for Tensor Cores
-- **Persistent Kernels** (`src/performance/persistent_kernels.cu`) - Kernel reuse across batches
+- **Memory Pool** (`src/performance/memory_pool.cu`) — pre-allocated buffers (~85% cudaMalloc overhead reduction)
+- **CUDA Graphs** (`src/performance/cuda_graphs.cu`) — captured kernel DAG for reduced launch overhead
+- **Mixed Precision** (`src/performance/mixed_precision.cu`) — FP16/TF32 kernels for Tensor Cores
+- **Persistent Kernels** (`src/performance/persistent_kernels.cu`) — kernel reuse across batches
+- **Async Streams** (`src/performance/async_streams.cu`) — double-buffered async H2D/compute/D2H overlap
+- **Unified Memory** (`src/performance/unified_memory.cu`) — managed memory with async prefetch
+- **Multi-Stream Pipeline** (`src/performance/multi_stream_pipeline.cu`) — concurrent preprocessing + inference
 
 ### TensorRT Integration
 
-- **Plugin Wrappers** (`src/tensorrt/plugin_wrapper.cpp`) - Custom TensorRT plugins for CNN inference
+- **CNN Plugins** (`src/tensorrt/plugin_wrapper.cpp`) — `ConvInt8Plugin`, `ConvReLUPlugin` (IPluginV2DynamicExt)
+- **PagedAttention Plugin** (`src/tensorrt/paged_attention_plugin.cpp`) — TensorRT custom op for paged KV-cache
+- **vLLM PyTorch Plugin** (`src/tensorrt/vllm_plugin_wrapper.cpp`) — TORCH_LIBRARY registration for C++ path
 
-### Python Bindings
+### Python API
 
-- **pybind11 module** (`src/python/`) - numpy and PyTorch support
-- Install via `pip install kernel-craft` (PyPI)
-- Type stubs (`.pyi`) for IDE support
-
-## Directory Structure
-
-```
-kernel-craft/
-├── src/
-│   ├── kernels/
-│   │   ├── core/             # Core convolution kernels
-│   │   │   ├── conv_naive.cu
-│   │   │   └── conv_tiled.cu
-│   │   ├── variants/        # Convolution variants
-│   │   │   ├── conv3d.cu
-│   │   │   ├── conv_dilated.cu
-│   │   │   ├── conv_transposed.cu
-│   │   │   └── conv_grouped.cu
-│   │   └── inference/       # Inference-optimized kernels
-│   │       ├── conv_int8.cu
-│   │       ├── bn_folding.cu
-│   │       └── conv_activation_fusion.cu
-│   ├── pipelines/           # Pipeline kernels
-│   │   ├── pipeline_fused.cu
-│   │   ├── pipeline_separate.cu
-│   │   └── preprocess_gpu.cu
-│   ├── performance/         # Performance optimization modules
-│   │   ├── memory_pool.cu
-│   │   ├── cuda_graphs.cu
-│   │   ├── mixed_precision.cu
-│   │   └── persistent_kernels.cu
-│   ├── custom/              # Custom operations
-│   │   └── custom_op.cu
-│   ├── tensorrt/            # TensorRT integration
-│   │   └── plugin_wrapper.cpp
-│   └── python/              # Python bindings
-│       ├── pybind_cuda.cpp
-│       ├── pyproject.toml
-│       └── tests/
-├── benchmarks/              # Benchmark programs
-├── tests/                  # C++ unit tests
-├── examples/
-│   ├── cpp/                # C++ examples
-│   └── python/             # Python examples
-├── data/
-├── CMakeLists.txt           # Build configuration
-├── README.md
-└── AGENTS.md              # Project guidelines
-```
-
-## Building
-
-```bash
-mkdir build && cd build
-cmake ..
-make
-```
+- **pybind11 extension** (`src/python/pybind_cuda.cpp`, `pybind_transformer.cpp`) — numpy and PyTorch tensor support
+- **ctypes bridge** (`src/python/kernel_craft_torch_ops.py`) — zero-copy access to `libkernels.so` via `data_ptr()`
+- **vLLM backend** (`src/python/kernel_craft_vllm_backend.py`) — `KernelCraftAttentionBackend` implementing the vLLM 0.21.0 v1 API
 
 ## Testing
 
-Tests are split into three suites. All commands run from the `build/` directory.
-
-### Release gate — runs everything in order, fails fast
+### Run everything (CI gate)
 
 ```bash
 cd build && make run_tests
@@ -114,144 +152,241 @@ cd build && make run_tests
 ### Individual suites
 
 ```bash
-# C++ unit tests (isolated single-kernel tests)
-cd build && make run_unit_tests
-
-# C++ integration tests (multi-component: pipelines, CUDA graphs, streams, TensorRT)
-cd build && make run_integration_tests
-
-# All Python tests (unit + integration)
-cd build && make run_python_tests
-
-# C++ benchmarks
-cd build && make run_benchmarks
+cd build && make run_unit_tests         # C++ unit tests (single-kernel)
+cd build && make run_integration_tests  # C++ integration (pipelines, CUDA graphs, streams)
+cd build && make run_python_tests       # All Python tests (unit + integration)
+cd build && make run_benchmarks         # C++ benchmarks
 ```
 
-### Python tests directly (without the local venv)
+### Python tests directly (using the vLLM venv)
 
 ```bash
 cd src/python
 source venv/bin/activate
-python -m pytest tests/test_bindings.py tests/test_transformer_bindings.py -v  # unit
-python -m pytest tests/test_vllm_backend.py -v                                  # integration
+pytest tests/test_bindings.py tests/test_transformer_bindings.py -v   # unit (conv + transformer)
+pytest tests/test_vllm_backend.py -v                                   # vLLM backend integration
+```
+
+Expected: **89 tests pass, 0 skip** (with torch 2.11.0+cu130 + vLLM 0.21.0).
+
+### Running a single test binary
+
+```bash
+./build/bin/test_flash_attention
+./build/bin/test_paged_attention
+./build/bin/test_quant_int4
+./build/bin/test_fp8_quant
+./build/bin/test_speculative_decoding
+./build/bin/test_tensor_parallel
+./build/bin/test_conv_naive
+./build/bin/test_conv_tiled
 ```
 
 ## Benchmarks
 
 ```bash
-cd build && make run_benchmarks   # run all benchmarks via CTest
+cd build && make run_benchmarks   # all benchmarks via CTest
 ```
 
 Or run individual binaries:
+
 ```bash
 ./build/bin/benchmark_conv
 ./build/bin/benchmark_flash_attention
 ./build/bin/benchmark_paged_attention
 ./build/bin/benchmark_quant
-./build/bin/benchmark_memory_pool      [width] [height] [iterations]
-./build/bin/benchmark_cuda_graphs      [width] [height] [iterations]
-./build/bin/benchmark_mixed_precision  [width] [height] [iterations]
-./build/bin/benchmark_persistent_kernels [width] [height] [iterations]
+./build/bin/benchmark_memory_pool         [width] [height] [iterations]
+./build/bin/benchmark_cuda_graphs         [width] [height] [iterations]
+./build/bin/benchmark_mixed_precision     [width] [height] [iterations]
+./build/bin/benchmark_persistent_kernels  [width] [height] [iterations]
 ```
 
 ## Python Usage
 
-### Install from PyPI (recommended)
-
-```bash
-pip install kernel-craft
-```
-
-Requires: Python 3.11-3.12, numpy, CUDA runtime
-
-### Build from source
-
-```bash
-cd src/python
-python -m build
-```
-
-The `.so` file will be in `src/python/build/` or `src/python/kernel_craft_python/`.
-
-### Usage
+### Convolution
 
 ```python
-import kernel_craft  # or: import kernel_craft_python as kc
+import kernel_craft_python as kc
 import numpy as np
 
-# numpy arrays
-input = np.random.rand(512, 512).astype(np.float32)
+img = np.random.rand(512, 512).astype(np.float32)
 kernel = np.array([[0,1,0],[1,-4,1],[0,1,0]], dtype=np.float32)
-result = kernel_craft.conv_naive(input, kernel)
 
-# PyTorch tensors on CUDA
+result = kc.conv_naive(img, kernel)
+result = kc.conv_tiled(img, kernel, tile_w=8, tile_h=8)
+
+# PyTorch CUDA tensors are accepted directly
 import torch
-input_t = torch.rand(512, 512, device='cuda')
-result_t = kernel_craft.conv_naive(input_t, kernel)
+img_t = torch.rand(512, 512, device='cuda')
+result_t = kc.conv_naive(img_t, kernel)
+```
 
-# Tiled convolution with custom tile size
-result = kernel_craft.conv_tiled(input, kernel, tile_w=8, tile_h=8)
+### FlashAttention
+
+```python
+import kernel_craft_python as kc
+import numpy as np
+
+B, H, N, d = 1, 8, 512, 64
+Q = np.random.randn(B, H, N, d).astype(np.float32)
+K = np.random.randn(B, H, N, d).astype(np.float32)
+V = np.random.randn(B, H, N, d).astype(np.float32)
+
+out = kc.flash_attention(Q, K, V, causal=True)
+```
+
+### INT4 Dequantization
+
+```python
+# packed_weights: [out_features, in_features // 2]  (2×INT4 per byte)
+# scales: [out_features, in_features // group_size]
+weights_fp32 = kc.quant_int4_dequant(packed_weights, scales, group_size=128)
+```
+
+### FP8 Quantization
+
+```python
+q_data, scale = kc.fp8_quantize(tensor, mode="per_token")
+recovered = kc.fp8_dequantize(q_data, scale, mode="per_token")
+```
+
+### vLLM Backend
+
+```python
+import kernel_craft_python.kernel_craft_vllm_backend as kb
+kb.register()  # registers KernelCraftAttentionBackend with vLLM
+
+# Or set environment variable before starting vLLM:
+# VLLM_ATTENTION_BACKEND=kernel_craft
 ```
 
 ## Performance Results
 
-### Convolution Kernels (3×3 kernel)
+All results on RTX 4070 Laptop (SM 8.9, 8 GB VRAM, CUDA 12.0).
 
-| Kernel | Image Size | Time (ms) | Notes |
-|--------|------------|-----------|---------|
-| Naive | 256×256 | ~0.45 | Baseline |
-| Tiled 8×8 | 256×256 | ~0.36 | Best for small images |
-| Tiled 16×16 | 1024×1024 | ~0.60 | Balanced |
-| Tiled 32×32 | 2048×2048 | ~1.39 | Best for large images |
+### Convolution (3×3 kernel)
 
-### Inference Kernels (Phase 10)
+| Kernel | Image Size | Time (ms) |
+|--------|------------|-----------|
+| Naive | 256×256 | ~0.45 |
+| Tiled 8×8 | 256×256 | ~0.36 |
+| Tiled 16×16 | 1024×1024 | ~0.60 |
+| Tiled 32×32 | 2048×2048 | ~1.39 |
+| Fused conv+BN+ReLU | 1024×1024 | ~0.42 (~2.3× vs separate) |
 
-| Kernel | Precision | Image Size | Time (ms) | Notes |
-|--------|-----------|------------|-----------|---------|
-| INT8 Naive | INT8 | 256×256 | ~0.40 | ~4× bandwidth reduction |
-| INT8 Tiled | INT8 | 256×256 | ~0.35 | Best for inference |
-| Conv+ReLU | FP32 | 256×256 | ~0.38 | Eliminates intermediate memory |
-| BN Folding | FP32 | C_out=64 | ~0.01 | One-time precomputation |
+### FlashAttention (B=1, H=8, d=64)
 
-### Pipeline Fusion
+| Config | Seq Len | Causal | Time (ms) | Throughput |
+|--------|---------|--------|-----------|------------|
+| MHA | 512 | No | ~0.80 | ~675 Gflops |
+| MHA | 1024 | No | ~3.08 | ~698 Gflops |
+| MHA | 2048 | No | ~9.94 | ~865 Gflops |
+| MHA | 1024 | Yes | ~2.18 | ~985 Gflops |
+| GQA 4:1 | 512 | No | ~0.67 | ~801 Gflops |
 
-| Pipeline | Kernel Launches | Time (ms) | Speedup |
-|----------|----------------|-----------|---------|
-| Separate | 3 | ~0.96 | Baseline |
-| Fused | 1 | ~0.42 | ~2.3× |
+### PagedAttention Decode (B=1, H=8, d=64)
+
+| Seq Len | Page Size | Time (ms) |
+|---------|-----------|-----------|
+| 256 | 16 / 32 / 64 | ~0.13 |
+| 1024 | 16 / 32 / 64 | ~0.48 |
+
+### Quantization
+
+| Kernel | Config | Throughput |
+|--------|--------|------------|
+| INT4 dequant | 4096×4096, group=128 | ~195 GB/s |
+| INT4 GEMV | 4096×4096 | ~210 Gflops |
+| FP8 quantize (per-token) | 1024×4096 | ~171 GB/s |
+| FP8 dequantize | 1024×4096 | ~234 GB/s |
 
 ### Performance Optimizations
 
-| Optimization | Overhead Reduction |
-|-------------|-------------------|
-| Memory Pool | ~85% (buffer reuse) |
-| CUDA Graphs | ~5-10μs per launch |
-| FP16 (Tensor Cores) | ~2× throughput |
-| Persistent Kernels | ~50% lower latency |
+| Optimization | Result |
+|-------------|--------|
+| Memory Pool | ~85% cudaMalloc overhead reduction (16× buffer reuse) |
+| CUDA Graphs | ~5–10 μs launch overhead vs ~15–30 μs separate |
+| FP16 Tensor Cores | ~2× throughput vs FP32 |
+| Persistent Kernels | ~50% lower latency for fixed-batch streams |
+| Async double-buffer | ~2× on large batches (512×512, 16 batches) |
 
-### Phase 10: TensorRT Integration
+## Directory Structure
 
-| Plugin | Purpose | Status |
-|--------|---------|--------|
-| ConvInt8Plugin | INT8 quantized convolution | ✅ Complete |
-| ConvReLUPlugin | Fused Conv+ReLU | ✅ Complete |
-| ConvInt8PluginCreator | Plugin registration | ✅ Complete |
-| ConvReLUPluginCreator | Plugin registration | ✅ Complete |
+```
+kernel-craft/
+├── src/
+│   ├── kernels/
+│   │   ├── core/                    # Core 2D convolution
+│   │   │   ├── conv_naive.cu
+│   │   │   └── conv_tiled.cu
+│   │   ├── variants/                # Convolution variants
+│   │   │   ├── conv3d.cu
+│   │   │   ├── conv_dilated.cu
+│   │   │   ├── conv_transposed.cu
+│   │   │   └── conv_grouped.cu
+│   │   ├── inference/               # CNN inference optimization
+│   │   │   ├── conv_int8.cu
+│   │   │   ├── bn_folding.cu
+│   │   │   └── conv_activation_fusion.cu
+│   │   └── transformer/             # LLM / attention kernels
+│   │       ├── flash_attention.cu
+│   │       ├── paged_attention.cu
+│   │       ├── quant_int4.cu
+│   │       ├── fp8_quant.cu
+│   │       ├── speculative_decoding.cu
+│   │       └── tensor_parallel.cu
+│   ├── pipelines/
+│   │   ├── pipeline_fused.cu
+│   │   ├── pipeline_separate.cu
+│   │   └── preprocess_gpu.cu
+│   ├── performance/
+│   │   ├── memory_pool.cu
+│   │   ├── cuda_graphs.cu
+│   │   ├── mixed_precision.cu
+│   │   ├── persistent_kernels.cu
+│   │   ├── async_streams.cu
+│   │   ├── unified_memory.cu
+│   │   └── multi_stream_pipeline.cu
+│   ├── custom/
+│   │   └── custom_op.cu
+│   ├── tensorrt/
+│   │   ├── plugin_wrapper.cpp          # CNN TensorRT plugins
+│   │   ├── paged_attention_plugin.cpp  # PagedAttention TensorRT plugin
+│   │   └── vllm_plugin_wrapper.cpp     # TORCH_LIBRARY custom ops (C++ path)
+│   └── python/
+│       ├── pybind_cuda.cpp             # Bindings: conv kernels
+│       ├── pybind_transformer.cpp      # Bindings: transformer kernels
+│       ├── kernel_craft_torch_ops.py   # ctypes bridge to libkernels.so
+│       ├── kernel_craft_vllm_backend.py
+│       ├── pyproject.toml
+│       └── tests/
+│           ├── test_bindings.py
+│           ├── test_transformer_bindings.py
+│           └── test_vllm_backend.py
+├── benchmarks/
+│   ├── benchmark_conv.cpp
+│   ├── benchmark_flash_attention.cpp
+│   ├── benchmark_paged_attention.cpp
+│   ├── benchmark_quant.cpp
+│   └── benchmark_vllm_e2e.py
+├── tests/                             # C++ unit tests
+│   ├── test_conv_naive.cpp
+│   ├── test_conv_tiled.cpp
+│   ├── test_flash_attention.cpp
+│   ├── test_paged_attention.cpp
+│   ├── test_quant_int4.cpp
+│   ├── test_fp8_quant.cpp
+│   ├── test_speculative_decoding.cpp
+│   └── test_tensor_parallel.cpp
+├── CMakeLists.txt
+└── README.md
+```
 
 ## Key Insights
 
-- Tiled convolution reduces global memory traffic by ~40%
-- Fusing conv+batchnorm+relu saves ~40% memory bandwidth vs separate kernels
-- 8×8 tile provides best overall performance for 3×3 kernels
-- Memory movement dominates cost more than arithmetic
-
-## Inference Engine Integration
-kernel-craft's inference optimizations are designed to integrate with production inference engines:
-
-### TensorRT (Vision/CNN Models)
-- **Custom Plugins**: Wrap INT8 quantized convolution and BN folding logic as TensorRT `IPluginV3` plugins to add custom kernels to serialized TensorRT engines.
-- **Pre-Build Weight Folding**: Use the BN folding utility to pre-compute folded conv weights before TensorRT engine building, eliminating separate BN layers for inference.
-- See `examples/tensorrt/` for step-by-step integration demos.
-
-### vLLM (LLM Models, Deferred)
-Transformer-specific inference kernels (Flash Attention, LayerNorm, RMSNorm) will be added in future phases and integrated as vLLM custom PyTorch ops following [vLLM CustomOp guidelines](https://docs.vllm.ai/en/stable/design/custom_op/).
+- Tiled convolution reduces global memory traffic by ~40% via shared memory reuse
+- Fusing conv+BN+ReLU saves ~40% memory bandwidth over separate kernel launches — memory movement dominates over arithmetic
+- Causal FlashAttention is faster than full attention at the same sequence length — skipped KV tiles cost nothing
+- FP8 E4M3 achieves ~5.8% mean relative error (3 mantissa bits); per-token scaling bounds per-row error tightly
+- Page size (16/32/64 tokens) has minimal impact on PagedAttention decode latency
+- The ctypes bridge reads `data_ptr()` directly from torch CUDA tensors — no GPU→CPU roundtrip
