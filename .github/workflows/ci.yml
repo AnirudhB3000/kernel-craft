@@ -7,8 +7,9 @@ on:
     branches: [main, master]
 
 jobs:
-  # Build-only job - runs on all pushes
+  # Build-only job - runs on all pushes (skip with [skip recipe] in commit message)
   kernel-recipe-check:
+    if: "!contains(github.event.head_commit.message, '[skip recipe]')"
     runs-on: ubuntu-latest
     container: nvidia/cuda:12.4.0-devel-ubuntu22.04
     
