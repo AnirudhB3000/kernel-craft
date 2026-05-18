@@ -102,33 +102,57 @@ make
 
 ## Testing
 
+Tests are split into three suites. All commands run from the `build/` directory.
+
+### Release gate — runs everything in order, fails fast
+
 ```bash
-make run_tests          # Build and run all C++ tests
-ctest --output-on-failure
+cd build && make run_tests
+# C++ unit → Python unit → C++ integration → Python integration → benchmarks
 ```
 
-Run Python tests:
+### Individual suites
+
+```bash
+# C++ unit tests (isolated single-kernel tests)
+cd build && make run_unit_tests
+
+# C++ integration tests (multi-component: pipelines, CUDA graphs, streams, TensorRT)
+cd build && make run_integration_tests
+
+# All Python tests (unit + integration)
+cd build && make run_python_tests
+
+# C++ benchmarks
+cd build && make run_benchmarks
+```
+
+### Python tests directly (without the local venv)
+
 ```bash
 cd src/python
-python -m pytest tests/ -v
+source venv/bin/activate
+python -m pytest tests/test_bindings.py tests/test_transformer_bindings.py -v  # unit
+python -m pytest tests/test_vllm_backend.py -v                                  # integration
 ```
 
 ## Benchmarks
 
-Run individual benchmarks:
 ```bash
-# Convolution benchmarks
-./bin/benchmark_conv              # Naive vs tiled
-./bin/benchmark_conv --tiled      # Tiled variant
-
-# Performance benchmarks
-./bin/benchmark_memory_pool      [width] [height] [iterations]
-./bin/benchmark_cuda_graphs      [width] [height] [iterations]
-./bin/benchmark_mixed_precision [width] [height] [iterations]
-./bin/benchmark_persistent_kernels [width] [height] [iterations]
+cd build && make run_benchmarks   # run all benchmarks via CTest
 ```
 
-Default: 1024x1024 image, 100 iterations
+Or run individual binaries:
+```bash
+./build/bin/benchmark_conv
+./build/bin/benchmark_flash_attention
+./build/bin/benchmark_paged_attention
+./build/bin/benchmark_quant
+./build/bin/benchmark_memory_pool      [width] [height] [iterations]
+./build/bin/benchmark_cuda_graphs      [width] [height] [iterations]
+./build/bin/benchmark_mixed_precision  [width] [height] [iterations]
+./build/bin/benchmark_persistent_kernels [width] [height] [iterations]
+```
 
 ## Python Usage
 

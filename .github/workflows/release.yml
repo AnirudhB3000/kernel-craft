@@ -96,9 +96,13 @@ jobs:
           cmake .. -DCMAKE_CUDA_ARCHITECTURES=75
           make -j$(nproc)
 
-      - name: Run C++ tests
+      - name: Run C++ unit tests
         working-directory: build
-        run: ctest --output-on-failure
+        run: make run_unit_tests
+
+      - name: Run C++ integration tests
+        working-directory: build
+        run: make run_integration_tests
 
       - name: Clear dist directory
         working-directory: src/python
@@ -108,11 +112,15 @@ jobs:
         working-directory: src/python
         run: /tmp/releasevenv/bin/python -m build
 
-      - name: Run Python tests
+      - name: Run Python unit tests
         working-directory: src/python
         run: |
           /tmp/releasevenv/bin/pip install dist/*.whl
-          /tmp/releasevenv/bin/python -m pytest tests/ -v
+          /tmp/releasevenv/bin/python -m pytest tests/test_bindings.py tests/test_transformer_bindings.py -v
+
+      - name: Run Python integration tests
+        working-directory: src/python
+        run: /tmp/releasevenv/bin/python -m pytest tests/test_vllm_backend.py -v
 
       - name: Upload to TestPyPI
         working-directory: src/python

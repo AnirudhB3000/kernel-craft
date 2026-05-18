@@ -328,18 +328,107 @@ add_test(NAME benchmark_flash_attention COMMAND benchmark_flash_attention)
 add_test(NAME benchmark_paged_attention COMMAND benchmark_paged_attention)
 add_test(NAME benchmark_quant COMMAND benchmark_quant)
 
-# Convenience target that runs all registered tests and shows a concise summary
-add_custom_target(run_tests
-    COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-    DEPENDS test_conv_naive test_conv_tiled test_preprocess test_pipeline test_custom_op test_memory_pool test_cuda_graphs test_mixed_precision test_persistent_kernels test_conv_int8 test_bn_folding test_conv_activation_fusion test_async_streams test_unified_memory test_multi_stream_pipeline test_flash_attention test_paged_attention test_quant_int4 test_fp8_quant test_speculative_decoding test_tensor_parallel
-    COMMENT "Running all unit tests via CTest"
+# ---------------------------------------------------------------
+# Test suite labels: unit | integration | benchmark
+# ---------------------------------------------------------------
+set_tests_properties(
+    conv3d_test conv_dilated_test conv_transposed_test conv_grouped_test
+    conv_naive_test conv_tiled_test
+    preprocess_test custom_op_test
+    memory_pool_test mixed_precision_test persistent_kernels_test
+    conv_int8_test bn_folding_test conv_activation_fusion_test
+    flash_attention_test paged_attention_test
+    quant_int4_test fp8_quant_test
+    speculative_decoding_test tensor_parallel_test
+    PROPERTIES LABELS "unit"
 )
 
-# Convenience target to run only benchmarks via CTest (provides summary)
+set_tests_properties(
+    pipeline_test
+    cuda_graphs_test
+    async_streams_test unified_memory_test multi_stream_pipeline_test
+    tensorrt_integration_test
+    PROPERTIES LABELS "integration"
+)
+
+set_tests_properties(
+    benchmark_conv benchmark_custom benchmark_pipeline benchmark_full_pipeline
+    benchmark_memory_pool benchmark_cuda_graphs benchmark_mixed_precision
+    benchmark_persistent_kernels
+    benchmark_async_streams benchmark_unified_memory benchmark_multi_stream_pipeline
+    benchmark_flash_attention benchmark_paged_attention benchmark_quant
+    PROPERTIES LABELS "benchmark"
+)
+
+# ---------------------------------------------------------------
+# Convenience make targets
+# ---------------------------------------------------------------
+
+# Run C++ unit tests only
+# Matches all *_test names, excludes the six integration tests
+add_custom_target(run_unit_tests
+    COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/run_cpp_tests.sh" "${CMAKE_BINARY_DIR}" unit
+    DEPENDS
+        test_conv_naive test_conv_tiled test_conv3d test_conv_dilated
+        test_conv_transposed test_conv_grouped
+        test_conv_int8 test_bn_folding test_conv_activation_fusion
+        test_preprocess test_custom_op
+        test_memory_pool test_mixed_precision test_persistent_kernels
+        test_flash_attention test_paged_attention
+        test_quant_int4 test_fp8_quant
+        test_speculative_decoding test_tensor_parallel
+    COMMENT "Running C++ unit tests"
+)
+
+# Run C++ integration tests only
+add_custom_target(run_integration_tests
+    COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/run_cpp_tests.sh" "${CMAKE_BINARY_DIR}" integration
+    DEPENDS
+        test_pipeline test_cuda_graphs
+        test_async_streams test_unified_memory test_multi_stream_pipeline
+        test_tensorrt_integration
+    COMMENT "Running C++ integration tests"
+)
+
+# Run all C++ benchmarks
 add_custom_target(run_benchmarks
-    COMMAND ${CMAKE_CTEST_COMMAND} -R benchmark_ --output-on-failure
-    DEPENDS benchmark_conv benchmark_custom benchmark_pipeline benchmark_full_pipeline benchmark_memory_pool benchmark_cuda_graphs benchmark_mixed_precision benchmark_persistent_kernels benchmark_async_streams benchmark_unified_memory benchmark_multi_stream_pipeline benchmark_flash_attention benchmark_paged_attention benchmark_quant
-    COMMENT "Running all benchmarks via CTest"
+    COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/run_cpp_tests.sh" "${CMAKE_BINARY_DIR}" benchmark
+    DEPENDS
+        benchmark_conv benchmark_custom benchmark_pipeline benchmark_full_pipeline
+        benchmark_memory_pool benchmark_cuda_graphs benchmark_mixed_precision
+        benchmark_persistent_kernels
+        benchmark_async_streams benchmark_unified_memory benchmark_multi_stream_pipeline
+        benchmark_flash_attention benchmark_paged_attention benchmark_quant
+    COMMENT "Running all C++ benchmarks"
+)
+
+# Run all Python tests (unit + integration) via pytest
+add_custom_target(run_python_tests
+    COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/run_python_tests.sh" "${CMAKE_SOURCE_DIR}" all
+    COMMENT "Running all Python tests"
+)
+
+# Full release gate: C++ unit → Python unit → C++ integration → Python integration → benchmarks
+add_custom_target(run_tests
+    COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/run_all_tests.sh" "${CMAKE_BINARY_DIR}" "${CMAKE_SOURCE_DIR}"
+    DEPENDS
+        test_conv_naive test_conv_tiled test_conv3d test_conv_dilated
+        test_conv_transposed test_conv_grouped
+        test_conv_int8 test_bn_folding test_conv_activation_fusion
+        test_preprocess test_custom_op
+        test_memory_pool test_mixed_precision test_persistent_kernels
+        test_flash_attention test_paged_attention
+        test_quant_int4 test_fp8_quant
+        test_speculative_decoding test_tensor_parallel
+        test_pipeline test_cuda_graphs
+        test_async_streams test_unified_memory test_multi_stream_pipeline
+        test_tensorrt_integration
+        benchmark_conv benchmark_custom benchmark_pipeline benchmark_full_pipeline
+        benchmark_memory_pool benchmark_cuda_graphs benchmark_mixed_precision
+        benchmark_persistent_kernels
+        benchmark_async_streams benchmark_unified_memory benchmark_multi_stream_pipeline
+        benchmark_flash_attention benchmark_paged_attention benchmark_quant
+    COMMENT "Release gate: unit → python unit → integration → python integration → benchmarks"
 )
 
 # Example executables
