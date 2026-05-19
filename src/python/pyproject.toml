@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "kernel-craft"
 version = "1.0.0"
-description = "CUDA kernels for machine learning systems optimization"
+description = "CUDA kernels for ML training and inference"
 readme = "README.md"
 requires-python = ">=3.11, <3.13"
 license = "MIT"
 authors = [
-    {name = "kernel-craft contributors", email = "contact@example.com"}
+    {name = "Anirudh Bhattacharya", email = "anirudhbhattacharya1@gmail.com}
 ]
 keywords = ["cuda", "gpu", "convolution", "machine-learning", "deep-learning"]
 classifiers = [
@@ -37,7 +37,7 @@ torch = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/anomalyco/kernel-craft"
+Homepage = "https://github.com/anirudhb3000/kernel-craft"
 
 # Build tags for different CUDA versions
 # Use: pip install kernel-craft --extra-index-url https://download.pytorch.org/whl/cu121
