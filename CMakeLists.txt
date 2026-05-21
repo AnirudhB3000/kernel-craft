@@ -41,6 +41,32 @@ list(REMOVE_ITEM CUDA_SOURCES ${CUDA_SOURCES_EXCLUDE})
 # Link CUDA libraries if needed
 find_package(CUDAToolkit REQUIRED)
 
+# ---------------------------------------------------------------
+# NCCL support (optional) — Phase 13 tensor parallelism
+# ---------------------------------------------------------------
+find_path(NCCL_INCLUDE_DIR nccl.h
+    HINTS
+        ${CUDAToolkit_INCLUDE_DIRS}
+        /usr/include
+        /usr/local/cuda/include
+        /usr/local/include
+)
+find_library(NCCL_LIBRARY
+    NAMES nccl nccl_static
+    HINTS
+        ${CUDAToolkit_LIBRARY_DIR}
+        /usr/lib/x86_64-linux-gnu
+        /usr/local/cuda/lib64
+        /usr/local/lib
+)
+if(NCCL_INCLUDE_DIR AND NCCL_LIBRARY)
+    message(STATUS "Found NCCL: include=${NCCL_INCLUDE_DIR}  lib=${NCCL_LIBRARY}")
+    set(HAVE_NCCL TRUE)
+else()
+    message(STATUS "NCCL not found — NCCL-backed collectives will be stubs (Phase 13)")
+    set(HAVE_NCCL FALSE)
+endif()
+
 # TensorRT support (optional)
 if(DEFINED TENSORRT_ROOT)
     set(TensorRT_INCLUDE_DIR ${TENSORRT_ROOT}/include)
@@ -79,6 +105,13 @@ set_target_properties(kernel_craft_python PROPERTIES
 add_library(kernels SHARED ${CUDA_SOURCES})
 target_link_libraries(kernels PUBLIC CUDA::cudart)
 target_include_directories(kernels PUBLIC ${CMAKE_SOURCE_DIR}/src)
+
+# Wire NCCL into kernels (and propagate HAVE_NCCL definition) if found
+if(HAVE_NCCL)
+    target_include_directories(kernels PUBLIC ${NCCL_INCLUDE_DIR})
+    target_link_libraries(kernels PUBLIC ${NCCL_LIBRARY})
+    target_compile_definitions(kernels PUBLIC HAVE_NCCL)
+endif()
 
 # TensorRT plugin library (optional, requires TensorRT SDK)
 if(HAVE_TENSORRT)
@@ -265,6 +298,13 @@ target_link_libraries(benchmark_paged_attention PRIVATE kernels)
 add_executable(benchmark_quant benchmarks/benchmark_quant.cpp)
 target_link_libraries(benchmark_quant PRIVATE kernels)
 
+# Phase 13: Tensor parallel benchmark
+add_executable(benchmark_tensor_parallel benchmarks/benchmark_tensor_parallel.cpp)
+target_link_libraries(benchmark_tensor_parallel PRIVATE kernels)
+if(HAVE_NCCL)
+    target_compile_definitions(benchmark_tensor_parallel PRIVATE HAVE_NCCL)
+endif()
+
 # Phase 11: Python transformer module (separate pybind11 extension)
 pybind11_add_module(kernel_craft_transformer src/python/pybind_transformer.cpp)
 target_link_libraries(kernel_craft_transformer PRIVATE kernels CUDA::cudart)
@@ -328,6 +368,9 @@ add_test(NAME benchmark_flash_attention COMMAND benchmark_flash_attention)
 add_test(NAME benchmark_paged_attention COMMAND benchmark_paged_attention)
 add_test(NAME benchmark_quant COMMAND benchmark_quant)
 
+# Phase 13 benchmarks
+add_test(NAME benchmark_tensor_parallel COMMAND benchmark_tensor_parallel)
+
 # ---------------------------------------------------------------
 # Test suite labels: unit | integration | benchmark
 # ---------------------------------------------------------------
@@ -357,6 +400,7 @@ set_tests_properties(
     benchmark_persistent_kernels
     benchmark_async_streams benchmark_unified_memory benchmark_multi_stream_pipeline
     benchmark_flash_attention benchmark_paged_attention benchmark_quant
+    benchmark_tensor_parallel
     PROPERTIES LABELS "benchmark"
 )
 
@@ -399,6 +443,7 @@ add_custom_target(run_benchmarks
         benchmark_persistent_kernels
         benchmark_async_streams benchmark_unified_memory benchmark_multi_stream_pipeline
         benchmark_flash_attention benchmark_paged_attention benchmark_quant
+        benchmark_tensor_parallel
     COMMENT "Running all C++ benchmarks"
 )
 
@@ -428,6 +473,7 @@ add_custom_target(run_tests
         benchmark_persistent_kernels
         benchmark_async_streams benchmark_unified_memory benchmark_multi_stream_pipeline
         benchmark_flash_attention benchmark_paged_attention benchmark_quant
+        benchmark_tensor_parallel
     COMMENT "Release gate: unit → python unit → integration → python integration → benchmarks"
 )
 

@@ -82,6 +82,28 @@ extern "C" void launch_allgather(
     float** d_chunks, float* d_output, int chunk_size, int num_ranks,
     cudaStream_t stream);
 
+// Phase 13: col/row parallel linear
+extern "C" void launch_col_parallel_linear(
+    const float* d_x, const float* d_W, float* d_y,
+    int M, int N_rank, int K, cudaStream_t stream);
+
+extern "C" void launch_row_parallel_linear(
+    const float* d_x_rank, const float* d_W, float* d_out,
+    int M, int N, int K_rank, cudaStream_t stream);
+
+// Phase 13: NCCL collectives
+extern "C" void nccl_comm_init_all(void** comms, int num_comms, const int* devs);
+extern "C" void nccl_comm_destroy(void* comm);
+extern "C" void nccl_group_start(void);
+extern "C" void nccl_group_end(void);
+extern "C" void launch_ring_allreduce_nccl(
+    void* comm, float* d_buf, int count, cudaStream_t stream);
+extern "C" void launch_allgather_nccl(
+    void* comm, const float* d_sendbuf, float* d_recvbuf,
+    int sendcount, cudaStream_t stream);
+extern "C" int nccl_comm_count(void* comm);
+extern "C" int nccl_comm_user_rank(void* comm);
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -372,7 +394,217 @@ py::tuple py_speculative_decode(
 }
 
 // ---------------------------------------------------------------------------
-// Module definition — merged into existing kernel_craft_python module
+// Phase 11: ring_allreduce / allgather (simulation, list-of-arrays interface)
+// ---------------------------------------------------------------------------
+
+/**
+ * \brief Simulate ring all-reduce over a list of numpy arrays (in-place).
+ *
+ * :param arrays: list of float32 numpy arrays of equal length (one per rank).
+ * :return: the same list, each array holding the global element-wise sum.
+ */
+py::list py_ring_allreduce(py::list arrays)
+{
+    int num_ranks = (int)arrays.size();
+    if (num_ranks == 0) return arrays;
+
+    auto buf0 = py::cast<py::array_t<float>>(arrays[0]).request();
+    int count  = (int)buf0.size;
+
+    std::vector<float*> d_bufs(num_ranks);
+    for (int r = 0; r < num_ranks; ++r) {
+        auto arr = py::cast<py::array_t<float>>(arrays[r]).request();
+        d_bufs[r] = (float*)device_alloc((size_t)count * sizeof(float));
+        h2d(d_bufs[r], arr.ptr, (size_t)count * sizeof(float));
+    }
+
+    launch_ring_allreduce(d_bufs.data(), count, num_ranks, 0);
+
+    for (int r = 0; r < num_ranks; ++r) {
+        auto arr = py::cast<py::array_t<float>>(arrays[r]).request();
+        d2h(arr.ptr, d_bufs[r], (size_t)count * sizeof(float));
+        cudaFree(d_bufs[r]);
+    }
+    return arrays;
+}
+
+/**
+ * \brief Simulate all-gather: concatenate list of equal-length chunks.
+ *
+ * :param chunks: list of float32 numpy arrays [chunk_size] (one per rank).
+ * :return: float32 numpy array [num_ranks * chunk_size].
+ */
+py::array_t<float> py_allgather(py::list chunks)
+{
+    int num_ranks  = (int)chunks.size();
+    auto buf0      = py::cast<py::array_t<float>>(chunks[0]).request();
+    int chunk_size = (int)buf0.size;
+
+    std::vector<float*> d_chunks(num_ranks);
+    for (int r = 0; r < num_ranks; ++r) {
+        auto arr = py::cast<py::array_t<float>>(chunks[r]).request();
+        d_chunks[r] = (float*)device_alloc((size_t)chunk_size * sizeof(float));
+        h2d(d_chunks[r], arr.ptr, (size_t)chunk_size * sizeof(float));
+    }
+
+    float* d_out = (float*)device_alloc((size_t)num_ranks * chunk_size * sizeof(float));
+    launch_allgather(d_chunks.data(), d_out, chunk_size, num_ranks, 0);
+
+    std::vector<float> out((size_t)num_ranks * chunk_size);
+    d2h(out.data(), d_out, (size_t)num_ranks * chunk_size * sizeof(float));
+
+    for (int r = 0; r < num_ranks; ++r) cudaFree(d_chunks[r]);
+    cudaFree(d_out);
+    return py::array_t<float>(
+        std::vector<ssize_t>{num_ranks * chunk_size}, out.data());
+}
+
+// ---------------------------------------------------------------------------
+// Phase 13: column-parallel and row-parallel linear
+// ---------------------------------------------------------------------------
+
+/**
+ * \brief Column-parallel linear forward shard.
+ *
+ * :param x:     float32 numpy [M, K] — input (replicated across ranks).
+ * :param W:     float32 numpy [N_rank, K] — weight shard (output-dim split).
+ * :return:      float32 numpy [M, N_rank] — output shard; all-gather to assemble.
+ */
+py::array_t<float> py_col_parallel_linear(
+    py::array_t<float> x, py::array_t<float> W)
+{
+    auto xb = x.request(), wb = W.request();
+    if (xb.ndim != 2 || wb.ndim != 2)
+        throw std::runtime_error("x and W must be 2-D");
+
+    int M      = (int)xb.shape[0];
+    int K      = (int)xb.shape[1];
+    int N_rank = (int)wb.shape[0];
+    if ((int)wb.shape[1] != K)
+        throw std::runtime_error("W.shape[1] must equal x.shape[1] (K)");
+
+    float *dx, *dW, *dy;
+    dx = (float*)device_alloc((size_t)M * K      * sizeof(float));
+    dW = (float*)device_alloc((size_t)N_rank * K  * sizeof(float));
+    dy = (float*)device_alloc((size_t)M * N_rank  * sizeof(float));
+
+    h2d(dx, xb.ptr, (size_t)M * K     * sizeof(float));
+    h2d(dW, wb.ptr, (size_t)N_rank * K * sizeof(float));
+
+    launch_col_parallel_linear(dx, dW, dy, M, N_rank, K, 0);
+    cudaDeviceSynchronize();
+
+    std::vector<float> out((size_t)M * N_rank);
+    d2h(out.data(), dy, (size_t)M * N_rank * sizeof(float));
+
+    cudaFree(dx); cudaFree(dW); cudaFree(dy);
+    return py::array_t<float>(std::vector<ssize_t>{M, N_rank}, out.data());
+}
+
+/**
+ * \brief Row-parallel linear forward shard.
+ *
+ * :param x_rank: float32 numpy [M, K_rank] — input shard (pre-split along K).
+ * :param W:      float32 numpy [N, K_rank] — weight shard (input-dim split).
+ * :return:       float32 numpy [M, N] — partial output; all-reduce to sum.
+ */
+py::array_t<float> py_row_parallel_linear(
+    py::array_t<float> x_rank, py::array_t<float> W)
+{
+    auto xb = x_rank.request(), wb = W.request();
+    if (xb.ndim != 2 || wb.ndim != 2)
+        throw std::runtime_error("x_rank and W must be 2-D");
+
+    int M      = (int)xb.shape[0];
+    int K_rank = (int)xb.shape[1];
+    int N      = (int)wb.shape[0];
+    if ((int)wb.shape[1] != K_rank)
+        throw std::runtime_error("W.shape[1] must equal x_rank.shape[1] (K_rank)");
+
+    float *dxr, *dW, *dout;
+    dxr  = (float*)device_alloc((size_t)M * K_rank * sizeof(float));
+    dW   = (float*)device_alloc((size_t)N * K_rank  * sizeof(float));
+    dout = (float*)device_alloc((size_t)M * N        * sizeof(float));
+
+    h2d(dxr, xb.ptr, (size_t)M * K_rank * sizeof(float));
+    h2d(dW,  wb.ptr, (size_t)N * K_rank  * sizeof(float));
+
+    launch_row_parallel_linear(dxr, dW, dout, M, N, K_rank, 0);
+    cudaDeviceSynchronize();
+
+    std::vector<float> out((size_t)M * N);
+    d2h(out.data(), dout, (size_t)M * N * sizeof(float));
+
+    cudaFree(dxr); cudaFree(dW); cudaFree(dout);
+    return py::array_t<float>(std::vector<ssize_t>{M, N}, out.data());
+}
+
+// ---------------------------------------------------------------------------
+// Phase 13: NCCL comm management (thin wrappers, opaque handle = uint64)
+// ---------------------------------------------------------------------------
+
+/**
+ * \brief Initialise NCCL communicators for the given device list.
+ *
+ * :param devs: list of CUDA device indices (may repeat for SHM testing).
+ * :return:     list of opaque uint64 comm handles (one per rank).
+ *
+ * When NCCL is not compiled in, all handles are 0 and a warning is printed.
+ */
+py::list py_nccl_comm_init(py::list devs)
+{
+    int n = (int)devs.size();
+    std::vector<int>   dev_arr(n);
+    std::vector<void*> comms(n, nullptr);
+    for (int i = 0; i < n; ++i) dev_arr[i] = py::cast<int>(devs[i]);
+
+    nccl_comm_init_all(comms.data(), n, dev_arr.data());
+
+    py::list result;
+    for (int i = 0; i < n; ++i)
+        result.append(py::int_(reinterpret_cast<uint64_t>(comms[i])));
+    return result;
+}
+
+/**
+ * \brief Destroy one NCCL communicator by opaque handle.
+ *
+ * :param handle: uint64 returned by nccl_comm_init().
+ */
+void py_nccl_comm_destroy(uint64_t handle)
+{
+    nccl_comm_destroy(reinterpret_cast<void*>(handle));
+}
+
+/**
+ * \brief NCCL in-place all-reduce (sum) for a single rank.
+ *
+ * Must be called inside a group (py_nccl_group_start / py_nccl_group_end)
+ * when multiple ranks share one process.
+ *
+ * :param handle: uint64 comm handle for this rank.
+ * :param arr:    float32 numpy array to reduce in-place.
+ */
+void py_nccl_allreduce(uint64_t handle, py::array_t<float> arr)
+{
+    auto buf = arr.request();
+    int count = (int)buf.size;
+
+    float* d_buf = (float*)device_alloc((size_t)count * sizeof(float));
+    h2d(d_buf, buf.ptr, (size_t)count * sizeof(float));
+
+    launch_ring_allreduce_nccl(reinterpret_cast<void*>(handle), d_buf, count, 0);
+    cudaDeviceSynchronize();
+
+    d2h(buf.ptr, d_buf, (size_t)count * sizeof(float));
+    cudaFree(d_buf);
+}
+
+void py_nccl_group_start() { nccl_group_start(); }
+void py_nccl_group_end()   { nccl_group_end();   }
+
+// ---------------------------------------------------------------------------
+// Module definition
 // ---------------------------------------------------------------------------
 
 PYBIND11_MODULE(kernel_craft_transformer, m) {
@@ -406,4 +638,41 @@ PYBIND11_MODULE(kernel_craft_transformer, m) {
         py::arg("draft_probs"), py::arg("target_probs"),
         py::arg("draft_tokens"), py::arg("rand_vals"), py::arg("rand_vals2"),
         "Verify draft tokens; returns (accepted_mask, corrected_tokens)");
+
+    // Phase 11 (previously unregistered): simulation collectives
+    m.def("ring_allreduce", &py_ring_allreduce,
+        py::arg("arrays"),
+        "In-place ring all-reduce over a list of numpy arrays (simulation)");
+
+    m.def("allgather", &py_allgather,
+        py::arg("chunks"),
+        "All-gather a list of equal-length numpy chunks; returns concatenated array");
+
+    // Phase 13: parallel linear shards
+    m.def("col_parallel_linear", &py_col_parallel_linear,
+        py::arg("x"), py::arg("W"),
+        "Col-parallel linear shard: y[M,N_rank] = x[M,K] @ W[N_rank,K]^T");
+
+    m.def("row_parallel_linear", &py_row_parallel_linear,
+        py::arg("x_rank"), py::arg("W"),
+        "Row-parallel linear shard: partial[M,N] = x_rank[M,K_rank] @ W[N,K_rank]^T");
+
+    // Phase 13: NCCL comm management
+    m.def("nccl_comm_init",    &py_nccl_comm_init,    py::arg("devs"),
+        "Init NCCL comms for given device list; returns list of opaque uint64 handles");
+    m.def("nccl_comm_destroy", &py_nccl_comm_destroy, py::arg("handle"),
+        "Destroy one NCCL comm handle");
+    m.def("nccl_allreduce",    &py_nccl_allreduce,
+        py::arg("handle"), py::arg("arr"),
+        "NCCL in-place all-reduce (sum) for this rank's comm handle");
+    m.def("nccl_group_start",  &py_nccl_group_start,
+        "Start NCCL group (bracket multi-rank calls in one process)");
+    m.def("nccl_group_end",    &py_nccl_group_end,
+        "End NCCL group and flush pending collectives");
+
+#ifdef HAVE_NCCL
+    m.attr("HAVE_NCCL") = true;
+#else
+    m.attr("HAVE_NCCL") = false;
+#endif
 }

@@ -141,6 +141,107 @@ extern "C" void launch_ring_allreduce(
     cudaStreamSynchronize(stream);
 }
 
+// ---------------------------------------------------------------------------
+// Tiled SGEMM for parallel-linear shards  (C = A × B^T)
+// A [M, K], B [N, K] (weight stored row-major), C [M, N]
+// C[m,n] = sum_k A[m,k] * B[n,k]
+// ---------------------------------------------------------------------------
+
+#define TP_TILE 16
+
+/**
+ * \brief Tiled SGEMM: C[M,N] = A[M,K] × B[N,K]^T.
+ *
+ * Thread (tx,ty) computes C[blockIdx.y*T+ty, blockIdx.x*T+tx].
+ *
+ * \param[in]  A  Left  operand [M, K].
+ * \param[in]  B  Right operand [N, K] (accessed transposed).
+ * \param[out] C  Output [M, N].
+ * \param[in]  M  Rows of A / rows of C.
+ * \param[in]  N  Rows of B / columns of C.
+ * \param[in]  K  Shared inner dimension.
+ */
+__global__ static void sgemm_nt_kernel(
+    const float* __restrict__ A,
+    const float* __restrict__ B,
+    float*       __restrict__ C,
+    int M, int N, int K)
+{
+    __shared__ float sA[TP_TILE][TP_TILE + 1];
+    __shared__ float sB[TP_TILE][TP_TILE + 1];
+
+    int row = blockIdx.y * TP_TILE + threadIdx.y;
+    int col = blockIdx.x * TP_TILE + threadIdx.x;
+    float acc = 0.f;
+
+    for (int t = 0; t < (K + TP_TILE - 1) / TP_TILE; ++t) {
+        int k = t * TP_TILE + threadIdx.x;
+        // Load A tile: sA[ty][tx] = A[row, t*T+tx]
+        sA[threadIdx.y][threadIdx.x] = (row < M && k < K) ? A[row * K + k] : 0.f;
+        // Load B tile (transposed): sB[ty][tx] = B[(blockIdx.x*T+ty), (t*T+tx)]
+        int n_b = blockIdx.x * TP_TILE + threadIdx.y;
+        sB[threadIdx.y][threadIdx.x] = (n_b < N && k < K) ? B[n_b * K + k] : 0.f;
+        __syncthreads();
+
+        // Accumulate: acc += sA[ty][k] * sB[tx][k]  (sB[tx] = B-row for col)
+        for (int ki = 0; ki < TP_TILE; ++ki)
+            acc += sA[threadIdx.y][ki] * sB[threadIdx.x][ki];
+        __syncthreads();
+    }
+    if (row < M && col < N) C[row * N + col] = acc;
+}
+
+/**
+ * \brief Column-parallel linear forward shard.
+ *
+ * Each rank holds an output-dimension shard of the weight matrix.
+ * Computes y_rank[M, N_rank] = x[M, K] × W_rank[N_rank, K]^T.
+ * After this call, all ranks must all-gather to form y[M, N_total].
+ *
+ * \param[in]  d_x     Input [M, K] — replicated across ranks.
+ * \param[in]  d_W     Weight shard [N_rank, K].
+ * \param[out] d_y     Output shard [M, N_rank].
+ * \param[in]  M       Batch size (rows of x).
+ * \param[in]  N_rank  Output features on this rank.
+ * \param[in]  K       Input features.
+ * \param[in]  stream  CUDA stream.
+ */
+extern "C" void launch_col_parallel_linear(
+    const float* d_x, const float* d_W, float* d_y,
+    int M, int N_rank, int K, cudaStream_t stream)
+{
+    dim3 block(TP_TILE, TP_TILE);
+    dim3 grid((N_rank + TP_TILE - 1) / TP_TILE,
+              (M      + TP_TILE - 1) / TP_TILE);
+    sgemm_nt_kernel<<<grid, block, 0, stream>>>(d_x, d_W, d_y, M, N_rank, K);
+}
+
+/**
+ * \brief Row-parallel linear forward shard.
+ *
+ * Each rank holds an input-dimension shard of the weight matrix.
+ * Computes partial[M, N] = x_rank[M, K_rank] × W_rank[N, K_rank]^T.
+ * After this call, all ranks must all-reduce (sum) partial results to
+ * obtain y[M, N].
+ *
+ * \param[in]  d_x_rank  Input shard [M, K_rank] — pre-split.
+ * \param[in]  d_W       Weight shard [N, K_rank].
+ * \param[out] d_out     Partial output [M, N].
+ * \param[in]  M         Batch size.
+ * \param[in]  N         Output features (same on every rank).
+ * \param[in]  K_rank    Input features on this rank.
+ * \param[in]  stream    CUDA stream.
+ */
+extern "C" void launch_row_parallel_linear(
+    const float* d_x_rank, const float* d_W, float* d_out,
+    int M, int N, int K_rank, cudaStream_t stream)
+{
+    dim3 block(TP_TILE, TP_TILE);
+    dim3 grid((N      + TP_TILE - 1) / TP_TILE,
+              (M      + TP_TILE - 1) / TP_TILE);
+    sgemm_nt_kernel<<<grid, block, 0, stream>>>(d_x_rank, d_W, d_out, M, N, K_rank);
+}
+
 /**
  * \brief Simulate all-gather over `num_ranks` device buffers on one GPU.
  *
