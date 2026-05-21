@@ -17,7 +17,6 @@ into TensorRT inference pipelines for optimized vision model deployment.
 ### Step 1: Compile Custom Kernels
 
 ```bash
-cd /home/aniru/kernel-craft
 mkdir build && cd build
 cmake .. -DTENSORRT_ROOT=/path/to/TensorRT
 make kernel_craft_tensorrt_plugin
@@ -170,4 +169,4 @@ If INT8 accuracy drops significantly:
 
 - [TensorRT Plugin API Documentation](https://docs.nvidia.com/deeplearning/tensorrt/api/c_api/index.html)
 - [INT8 Quantization in TensorRT](https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#int8_quantization)
-- [kernel-craft Phase 10 Documentation](AGENTS.md)
+- [kernel-craft Phase 10 Documentation](../CLAUDE.md)

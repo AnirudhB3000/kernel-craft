@@ -110,7 +110,8 @@ backend.
 - **INT4 Dequant + GEMV** (`src/kernels/transformer/quant_int4.cu`) — GPTQ/AWQ-style 2×INT4 packed per byte, per-group scales
 - **FP8 Quantization** (`src/kernels/transformer/fp8_quant.cu`) — E4M3 format, per-token/per-channel scaling, SmoothQuant-compatible
 - **Speculative Decoding** (`src/kernels/transformer/speculative_decoding.cu`) — rejection-sampling draft token verification
-- **Tensor Parallelism** (`src/kernels/transformer/tensor_parallel.cu`) — ring all-reduce and all-gather primitives
+- **Tensor Parallelism** (`src/kernels/transformer/tensor_parallel.cu`) — ring all-reduce, all-gather, column-parallel and row-parallel linear (tiled SGEMM)
+- **NCCL Collectives** (`src/kernels/transformer/tensor_parallel_nccl.cu`) — NCCL-backed all-reduce and all-gather; compiles stub fallback when NCCL is not installed
 
 ### Pipeline Kernels
 
@@ -182,6 +183,17 @@ Expected: **89 tests pass, 0 skip** (with torch 2.11.0+cu130 + vLLM 0.21.0).
 ./build/bin/test_conv_tiled
 ```
 
+### Multi-GPU tensor parallelism (requires 2+ GPUs or single-GPU simulation)
+
+```bash
+# Single-GPU simulation (always works):
+./build/bin/test_tensor_parallel
+
+# Real multi-GPU (requires torchrun and libnccl):
+CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 \
+    tests/test_tensor_parallel_multiprocess.py
+```
+
 ## Benchmarks
 
 ```bash
@@ -195,10 +207,13 @@ Or run individual binaries:
 ./build/bin/benchmark_flash_attention
 ./build/bin/benchmark_paged_attention
 ./build/bin/benchmark_quant
+./build/bin/benchmark_tensor_parallel     # sim BW + col/row parallel TFLOPS
 ./build/bin/benchmark_memory_pool         [width] [height] [iterations]
 ./build/bin/benchmark_cuda_graphs         [width] [height] [iterations]
 ./build/bin/benchmark_mixed_precision     [width] [height] [iterations]
 ./build/bin/benchmark_persistent_kernels  [width] [height] [iterations]
+./build/bin/benchmark_async_streams       [width] [height] [batches]
+./build/bin/benchmark_unified_memory      [width] [height] [iterations]
 ```
 
 ## Python Usage
@@ -248,6 +263,28 @@ weights_fp32 = kc.quant_int4_dequant(packed_weights, scales, group_size=128)
 ```python
 q_data, scale = kc.fp8_quantize(tensor, mode="per_token")
 recovered = kc.fp8_dequantize(q_data, scale, mode="per_token")
+```
+
+### Tensor Parallelism
+
+```python
+import kernel_craft_python as kc
+import numpy as np
+
+# Column-parallel linear: each rank holds W_rank [N/R, K]; input x is replicated
+x = np.random.randn(32, 4096).astype(np.float32)
+W_rank = np.random.randn(2048, 4096).astype(np.float32)   # 2 ranks → N/R = 2048
+y_rank = kc.col_parallel_linear(x, W_rank)                 # [32, 2048]
+
+# Row-parallel linear: each rank holds W_rank [N, K/R] and x_rank [M, K/R]
+x_rank = np.random.randn(32, 2048).astype(np.float32)
+W_rank = np.random.randn(4096, 2048).astype(np.float32)
+partial = kc.row_parallel_linear(x_rank, W_rank)            # [32, 4096]
+
+# NCCL (requires libnccl and multiple GPUs)
+if kc.HAVE_NCCL:
+    comms = kc.nccl_comm_init([0, 1])
+    kc.nccl_allreduce(comms[0], partial)
 ```
 
 ### vLLM Backend
@@ -310,6 +347,18 @@ All results on RTX 4070 Laptop (SM 8.9, 8 GB VRAM, CUDA 12.0).
 | Persistent Kernels | ~50% lower latency for fixed-batch streams |
 | Async double-buffer | ~2× on large batches (512×512, 16 batches) |
 
+### Tensor Parallelism (single-GPU simulation, RTX 4070 Laptop)
+
+| Operation | Config | Result |
+|-----------|--------|--------|
+| Sim all-gather | 2 ranks, 4 MB | ~117 GB/s |
+| Sim all-gather | 4 ranks, 4 MB | ~117 GB/s |
+| Sim ring all-reduce | 2 ranks, 4 MB | ~39 GB/s |
+| Col-parallel linear | M=32, N=4096, K=4096 | ~0.94 TFLOPS |
+| Row-parallel linear | M=32, N=11008, K=4096 | ~0.83 TFLOPS |
+
+Note: simulation bandwidth uses single-GPU device-copy; real NCCL all-reduce over NVLink would approach memory bandwidth.
+
 ## Directory Structure
 
 ```
@@ -334,7 +383,8 @@ kernel-craft/
 │   │       ├── quant_int4.cu
 │   │       ├── fp8_quant.cu
 │   │       ├── speculative_decoding.cu
-│   │       └── tensor_parallel.cu
+│   │       ├── tensor_parallel.cu
+│   │       └── tensor_parallel_nccl.cu
 │   ├── pipelines/
 │   │   ├── pipeline_fused.cu
 │   │   ├── pipeline_separate.cu
@@ -368,6 +418,14 @@ kernel-craft/
 │   ├── benchmark_flash_attention.cpp
 │   ├── benchmark_paged_attention.cpp
 │   ├── benchmark_quant.cpp
+│   ├── benchmark_tensor_parallel.cpp
+│   ├── benchmark_pipeline.cpp
+│   ├── benchmark_memory_pool.cpp
+│   ├── benchmark_cuda_graphs.cpp
+│   ├── benchmark_mixed_precision.cpp
+│   ├── benchmark_persistent_kernels.cpp
+│   ├── benchmark_async_streams.cpp
+│   ├── benchmark_unified_memory.cpp
 │   └── benchmark_vllm_e2e.py
 ├── tests/                             # C++ unit tests
 │   ├── test_conv_naive.cpp
@@ -377,7 +435,9 @@ kernel-craft/
 │   ├── test_quant_int4.cpp
 │   ├── test_fp8_quant.cpp
 │   ├── test_speculative_decoding.cpp
-│   └── test_tensor_parallel.cpp
+│   ├── test_tensor_parallel.cpp
+│   ├── test_tensor_parallel_multiprocess.py
+│   └── ... (conv variants, pipelines, performance infrastructure)
 ├── CMakeLists.txt
 └── README.md
 ```

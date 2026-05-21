@@ -1,10 +1,15 @@
+# Developer utilities
 .openclaude-profile.json
 /.vscode/
+venv/
+
+# Desitnation folders
 build/
 reports/
-venv/
-.pytest_cache/
 dist/
+
+# Automatically generated utilities
+.pytest_cache/
 kernel_craft_python/
 kernel_craft.egg-info/
 __pycache__/

@@ -99,6 +99,30 @@ recovered = kc.fp8_dequantize(q_data, scale, mode="per_token")
 accepted_mask = kc.speculative_decode(draft_probs, target_probs, draft_tokens)
 ```
 
+### Tensor parallelism (col/row parallel linear + NCCL)
+
+```python
+import kernel_craft_python as kc
+import numpy as np
+
+# Column-parallel linear — each rank holds W_rank [N/R, K]; input x is replicated
+x       = np.random.randn(32, 4096).astype(np.float32)
+W_rank  = np.random.randn(2048, 4096).astype(np.float32)  # 2 ranks → N/R = 2048
+y_rank  = kc.col_parallel_linear(x, W_rank)                # [32, 2048]
+
+# Row-parallel linear — each rank holds x_rank [M, K/R] and W_rank [N, K/R]
+x_rank  = np.random.randn(32, 2048).astype(np.float32)
+W_rank  = np.random.randn(4096, 2048).astype(np.float32)
+partial = kc.row_parallel_linear(x_rank, W_rank)           # [32, 4096]
+
+# NCCL (real multi-GPU; requires libnccl and peer-to-peer access)
+print(kc.HAVE_NCCL)           # True / False
+if kc.HAVE_NCCL:
+    comms = kc.nccl_comm_init([0, 1])   # list of opaque handles
+    kc.nccl_allreduce(comms[0], partial)
+    kc.nccl_comm_destroy(comms[0])
+```
+
 ### vLLM backend
 
 ```python
@@ -144,6 +168,13 @@ out = ops.flash_attention(Q, K, V, causal=True)
 | `fp8_quantize` | `(tensor, mode="per_token")` | `(ndarray, ndarray)` |
 | `fp8_dequantize` | `(q_data, scale, mode="per_token")` | ndarray |
 | `speculative_decode` | `(draft_probs, target_probs, draft_tokens)` | ndarray |
+| `col_parallel_linear` | `(x[M,K], W[N_rank,K])` | ndarray [M, N_rank] |
+| `row_parallel_linear` | `(x_rank[M,K_rank], W[N,K_rank])` | ndarray [M, N] |
+| `ring_allreduce` | `(buf)` | None (in-place, simulation) |
+| `allgather` | `(sendbuf, recvbuf, rank, nranks)` | None (simulation) |
+| `nccl_comm_init` | `(devs: list[int])` | list of handles (uint64) |
+| `nccl_comm_destroy` | `(handle)` | None |
+| `nccl_allreduce` | `(handle, arr)` | None (in-place) |
 
 ## Publishing to PyPI
 
