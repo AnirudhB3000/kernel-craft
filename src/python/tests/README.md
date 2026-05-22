@@ -9,9 +9,10 @@ pytest suite covering the pybind11 extension module and the vLLM backend integra
 | `conftest.py` | Shared fixtures (module import, device checks) | — |
 | `test_bindings.py` | CNN kernels: conv_naive, conv_tiled, INT8, BN folding, Conv+ReLU | 55 tests |
 | `test_transformer_bindings.py` | Transformer kernels: flash_attention, paged_attention, INT4/FP8 quant, speculative_decode | 17 tests |
+| `test_mamba_bindings.py` | Mamba/SSM kernels: selective_scan, depthwise_conv1d, rmsnorm | 17 tests |
 | `test_vllm_backend.py` | `KernelCraftAttentionBackend` — prefill, decode, KV-cache shape, metadata builder | 17 tests |
 
-**Total: 89 tests pass, 0 skip** (with torch 2.11.0+cu130 + vLLM 0.21.0 venv).
+**Total: 106 tests pass, 0 skip** (with torch 2.11.0+cu130 + vLLM 0.21.0 venv).
 
 ## Running
 
@@ -29,6 +30,9 @@ source venv/bin/activate
 
 # CNN + transformer bindings
 pytest tests/test_bindings.py tests/test_transformer_bindings.py -v
+
+# Mamba/SSM kernels
+pytest tests/test_mamba_bindings.py -v
 
 # vLLM backend (requires vllm installed)
 pytest tests/test_vllm_backend.py -v

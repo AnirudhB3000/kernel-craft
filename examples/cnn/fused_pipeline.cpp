@@ -91,7 +91,7 @@ extern "C" void launch_conv_tiled(const float* d_input, const float* d_kernel,
                                   dim3 block);
 
 /** \brief Separate in-place ReLU launcher for comparison timing. */
-extern "C" void launch_relu(float* d_data, int size);
+extern "C" void relu(float* d_data, int size);
 
 int main() {
     const int W = 256, H = 256, K = 3;
@@ -135,7 +135,7 @@ int main() {
     for (int i = 0; i < ITERS; ++i) {
         launch_conv_tiled(d_in, d_ker, d_tmp, W, H, K, block);
         /* BN affine applied as relu_bias = gamma*x+beta > 0; simulated via relu */
-        launch_relu(d_tmp, N);
+        relu(d_tmp, N);
     }
     cudaEventRecord(t1);
     cudaEventSynchronize(t1);

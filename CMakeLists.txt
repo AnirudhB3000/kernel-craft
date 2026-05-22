@@ -235,6 +235,13 @@ target_link_libraries(test_speculative_decoding PRIVATE kernels)
 add_executable(test_tensor_parallel tests/test_tensor_parallel.cpp)
 target_link_libraries(test_tensor_parallel PRIVATE kernels)
 
+# Phase 14: Mamba SSM tests
+add_executable(test_selective_scan tests/test_selective_scan.cpp)
+target_link_libraries(test_selective_scan PRIVATE kernels)
+
+add_executable(test_mamba_ops tests/test_mamba_ops.cpp)
+target_link_libraries(test_mamba_ops PRIVATE kernels)
+
 # Test executable for TensorRT plugin (only if TensorRT is available)
 if(HAVE_TENSORRT)
     add_executable(test_tensorrt_plugin tests/test_tensorrt_plugin.cpp
@@ -305,6 +312,10 @@ if(HAVE_NCCL)
     target_compile_definitions(benchmark_tensor_parallel PRIVATE HAVE_NCCL)
 endif()
 
+# Phase 14: Mamba SSM benchmark
+add_executable(benchmark_selective_scan benchmarks/benchmark_selective_scan.cpp)
+target_link_libraries(benchmark_selective_scan PRIVATE kernels)
+
 # Phase 11: Python transformer module (separate pybind11 extension)
 pybind11_add_module(kernel_craft_transformer src/python/pybind_transformer.cpp)
 target_link_libraries(kernel_craft_transformer PRIVATE kernels CUDA::cudart)
@@ -348,6 +359,10 @@ add_test(NAME fp8_quant_test COMMAND test_fp8_quant)
 add_test(NAME speculative_decoding_test COMMAND test_speculative_decoding)
 add_test(NAME tensor_parallel_test COMMAND test_tensor_parallel)
 
+# Phase 14: Mamba SSM tests
+add_test(NAME selective_scan_test COMMAND test_selective_scan)
+add_test(NAME mamba_ops_test COMMAND test_mamba_ops)
+
 # Register all benchmarks as tests
 add_test(NAME benchmark_conv COMMAND benchmark_conv)
 add_test(NAME benchmark_custom COMMAND benchmark_custom)
@@ -371,6 +386,9 @@ add_test(NAME benchmark_quant COMMAND benchmark_quant)
 # Phase 13 benchmarks
 add_test(NAME benchmark_tensor_parallel COMMAND benchmark_tensor_parallel)
 
+# Phase 14 benchmarks
+add_test(NAME benchmark_selective_scan COMMAND benchmark_selective_scan)
+
 # ---------------------------------------------------------------
 # Test suite labels: unit | integration | benchmark
 # ---------------------------------------------------------------
@@ -383,6 +401,7 @@ set_tests_properties(
     flash_attention_test paged_attention_test
     quant_int4_test fp8_quant_test
     speculative_decoding_test tensor_parallel_test
+    selective_scan_test mamba_ops_test
     PROPERTIES LABELS "unit"
 )
 
@@ -400,7 +419,7 @@ set_tests_properties(
     benchmark_persistent_kernels
     benchmark_async_streams benchmark_unified_memory benchmark_multi_stream_pipeline
     benchmark_flash_attention benchmark_paged_attention benchmark_quant
-    benchmark_tensor_parallel
+    benchmark_tensor_parallel benchmark_selective_scan
     PROPERTIES LABELS "benchmark"
 )
 
@@ -421,6 +440,7 @@ add_custom_target(run_unit_tests
         test_flash_attention test_paged_attention
         test_quant_int4 test_fp8_quant
         test_speculative_decoding test_tensor_parallel
+        test_selective_scan test_mamba_ops
     COMMENT "Running C++ unit tests"
 )
 
@@ -443,7 +463,7 @@ add_custom_target(run_benchmarks
         benchmark_persistent_kernels
         benchmark_async_streams benchmark_unified_memory benchmark_multi_stream_pipeline
         benchmark_flash_attention benchmark_paged_attention benchmark_quant
-        benchmark_tensor_parallel
+        benchmark_tensor_parallel benchmark_selective_scan
     COMMENT "Running all C++ benchmarks"
 )
 
@@ -465,6 +485,7 @@ add_custom_target(run_tests
         test_flash_attention test_paged_attention
         test_quant_int4 test_fp8_quant
         test_speculative_decoding test_tensor_parallel
+        test_selective_scan test_mamba_ops
         test_pipeline test_cuda_graphs
         test_async_streams test_unified_memory test_multi_stream_pipeline
         test_tensorrt_integration
@@ -473,7 +494,7 @@ add_custom_target(run_tests
         benchmark_persistent_kernels
         benchmark_async_streams benchmark_unified_memory benchmark_multi_stream_pipeline
         benchmark_flash_attention benchmark_paged_attention benchmark_quant
-        benchmark_tensor_parallel
+        benchmark_tensor_parallel benchmark_selective_scan
     COMMENT "Release gate: unit → python unit → integration → python integration → benchmarks"
 )
 

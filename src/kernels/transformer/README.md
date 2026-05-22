@@ -13,6 +13,9 @@ CUDA kernels targeting transformer-based language model inference. All kernels f
 | `speculative_decoding.cu` | Draft token verification via rejection sampling; outputs accepted token mask |
 | `tensor_parallel.cu` | Ring all-reduce, all-gather, column-parallel and row-parallel linear (tiled 16×16 SGEMM) |
 | `tensor_parallel_nccl.cu` | NCCL-backed all-reduce and all-gather; compiles to stubs when `HAVE_NCCL` is not defined |
+| `selective_scan.cu` | Mamba-1 ZOH selective scan over `[B, L, D]`; per-(b,d) thread, N_state ≤ 32 in registers |
+| `depthwise_conv1d.cu` | Causal depthwise conv1d; channels-first `[B, D, L]` layout, configurable `d_conv` |
+| `rmsnorm.cu` | Fused RMSNorm: two-pass parallel reduce → rms_inv → normalize + scale; D up to 65536 |
 
 ## Hardware Requirements
 
@@ -24,6 +27,9 @@ CUDA kernels targeting transformer-based language model inference. All kernels f
 | FP8 E4M3 | SM 8.9 | `__nv_fp8_e4m3` type requires CUDA ≥ 11.8 and Ada/Hopper |
 | Tensor Parallelism (SGEMM) | SM 6.0 | Tiled SGEMM for col/row parallel linear; single-GPU simulation always available |
 | Tensor Parallelism (NCCL) | SM 6.0 | Real multi-GPU all-reduce/all-gather; requires peer-to-peer and libnccl |
+| Selective Scan | SM 6.0 | Sequential recurrence per (b,d) thread; N_state capped at 32 |
+| Depthwise Conv1d | SM 6.0 | Causal index-gating; no explicit zero-pad buffer |
+| RMSNorm | SM 6.0 | Standard parallel reduction; no special hardware requirement |
 
 ## Launcher Signatures
 
@@ -69,6 +75,22 @@ void nccl_comm_destroy(void* comm);
 void launch_ring_allreduce_nccl(void* comm, float* d_buf, int count, cudaStream_t stream);
 void launch_allgather_nccl(void* comm, const float* sendbuf, float* recvbuf,
                            int count, cudaStream_t stream);
+
+// selective_scan.cu
+void launch_selective_scan(const float* d_u, const float* d_A_log,
+                           const float* d_B, const float* d_C,
+                           const float* d_delta, float* d_y,
+                           int B, int L, int D, int N_state,
+                           cudaStream_t stream);
+
+// depthwise_conv1d.cu  (input: channels-first [B, D, L])
+void launch_depthwise_conv1d(const float* d_x, const float* d_w, const float* d_bias,
+                             float* d_y, int B, int D, int L, int d_conv,
+                             cudaStream_t stream);
+
+// rmsnorm.cu
+void launch_rmsnorm(const float* d_x, const float* d_g, float* d_y,
+                    int rows, int D, float eps, cudaStream_t stream);
 ```
 
 ## Performance (RTX 4070 Laptop, SM 8.9, CUDA 12.0)
@@ -83,6 +105,9 @@ void launch_allgather_nccl(void* comm, const float* sendbuf, float* recvbuf,
 | Col-parallel linear | M=32, N=4096, K=4096 | ~0.94 TFLOPS |
 | Row-parallel linear | M=32, N=11008, K=4096 | ~0.83 TFLOPS |
 | Sim all-gather | 2 ranks, 4 MB | ~117 GB/s |
+| Selective scan | B=1, D=512, L=4096, N=16 | ~5.57 ms, ~36 Gflops |
+| Depthwise conv1d | B=1, D=2048, L=1024, d_conv=4 | ~0.068 ms, ~741 GB/s |
+| RMSNorm | 128 rows, D=4096 | ~0.025 ms, ~171 GB/s |
 
 ## Tests
 
@@ -93,6 +118,8 @@ void launch_allgather_nccl(void* comm, const float* sendbuf, float* recvbuf,
 ./build/bin/test_fp8_quant
 ./build/bin/test_speculative_decoding
 ./build/bin/test_tensor_parallel   # includes col/row parallel linear; NCCL tests skip without libnccl
+./build/bin/test_selective_scan    # 5 tests: small/typical/long/zero/max-state
+./build/bin/test_mamba_ops         # 8 tests: 4 conv1d variants + 4 rmsnorm variants
 
 # Multi-process NCCL test (requires 2+ GPUs or same-device workaround):
 CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 \

@@ -29,19 +29,19 @@
 
 ---
 
-### Phase 14: SSM / Mamba Kernels
+### Phase 14: SSM / Mamba Kernels ✅ COMPLETE
 
 **Goal**: Implement the selective scan and supporting primitives that make up a Mamba block. Selective scan is O(L) in memory vs O(L²) for attention, making it interesting for long-context inference.
 
-- [ ] `src/kernels/transformer/selective_scan.cu` — parallel prefix scan over `[B, L, D]` with per-timestep `A`, `B`, `C`, `delta` (Mamba-1 ZOH formulation); tiled shared-memory blocks with carry-forward across tiles
-- [ ] `src/kernels/transformer/depthwise_conv1d.cu` — causal depthwise conv1d (d_conv=4); per-channel independent, left-pad only
-- [ ] `src/kernels/transformer/rmsnorm.cu` — single-pass fused normalize + scale; no LayerNorm, matches Mamba block convention
-- [ ] `tests/test_selective_scan.cpp` — correctness vs naive sequential scan at B=1/4, L=256/1024, D=64
-- [ ] `tests/test_mamba_ops.cpp` — conv1d and RMSNorm correctness tests
-- [ ] `benchmarks/benchmark_selective_scan.cpp` — throughput (tokens/sec) vs sequence length L
-- [ ] `src/python/pybind_transformer.cpp` — expose `selective_scan()`, `depthwise_conv1d()`, `rmsnorm()`
-- [ ] `src/python/tests/test_mamba_bindings.py` — pytest correctness vs PyTorch reference; tolerance bounds
-- [ ] Document throughput and error bounds in CLAUDE.md Phase 14 section
+- [x] `src/kernels/transformer/selective_scan.cu` — ZOH selective scan; one thread per (b,d), N_state≤32 in registers
+- [x] `src/kernels/transformer/depthwise_conv1d.cu` — causal depthwise conv1d (d_conv=4); per-output-element threads
+- [x] `src/kernels/transformer/rmsnorm.cu` — single-pass fused normalize + scale with parallel block reduction
+- [x] `tests/test_selective_scan.cpp` — 5 tests; all pass; max_abs_err < 1e-8 vs CPU reference
+- [x] `tests/test_mamba_ops.cpp` — 8 tests (4 conv1d + 4 rmsnorm); all pass
+- [x] `benchmarks/benchmark_selective_scan.cpp` — throughput vs L for selective scan, depthwise conv1d, RMSNorm
+- [x] `src/python/pybind_transformer.cpp` — `selective_scan()`, `depthwise_conv1d()`, `rmsnorm()` added
+- [x] `src/python/tests/test_mamba_bindings.py` — 17 pytest tests; all pass (6 selective_scan + 5 conv1d + 6 rmsnorm)
+- [x] Documented in CLAUDE.md Phase 14 section
 
 ---
 

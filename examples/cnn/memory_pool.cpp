@@ -69,7 +69,7 @@ extern "C" void launch_conv_tiled(const float* d_input, const float* d_kernel,
                                   int width, int height, int ksize, dim3 block);
 
 /** \brief In-place ReLU activation. */
-extern "C" void launch_relu(float* d_data, int size);
+extern "C" void relu(float* d_data, int size);
 
 /**
  * \brief Opaque memory pool type (defined in src/performance/memory_pool.cu).
@@ -144,7 +144,7 @@ int main() {
         float* d_scratch = (float*)mem_pool_alloc(pool);
         if (!d_scratch) { fprintf(stderr, "Pool exhausted at batch %d\n", i); break; }
         launch_conv_tiled(d_in, d_ker, d_scratch, W, H, K, block);
-        launch_relu(d_scratch, W * H);
+        relu(d_scratch, W * H);
         mem_pool_free(pool, d_scratch);
     }
     cudaEventRecord(t1);
@@ -159,7 +159,7 @@ int main() {
         float* d_scratch;
         cudaMalloc(&d_scratch, img_bytes);          /* ~100–200 µs driver call */
         launch_conv_tiled(d_in, d_ker, d_scratch, W, H, K, block);
-        launch_relu(d_scratch, W * H);
+        relu(d_scratch, W * H);
         cudaFree(d_scratch);                         /* another driver call */
     }
     cudaEventRecord(t1);

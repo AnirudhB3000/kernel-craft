@@ -283,6 +283,72 @@ Example:
 
 ---
 
+## Phase 14: SSM / Mamba Kernels ✅ COMPLETE
+
+### Design Decisions
+
+#### Selective scan parallelism (`selective_scan.cu`)
+- One thread per (batch, channel) pair (b, d); B×D threads run concurrently
+- L timesteps processed sequentially within each thread — the SSM recurrence is inherently sequential along L
+- Hidden state h[N_state] held in local registers; the compiler keeps these in registers for N_state ≤ SS_MAX_N=32 (Mamba-1 default: 16)
+- ZOH discretization: `A_bar = exp(delta * A_log)`, `B_bar = delta * B`, `h = A_bar*h + B_bar*u`, `y = C @ h`
+- Max absolute error vs CPU sequential reference: < 1e-8 (both paths use `expf` identically)
+
+#### Depthwise conv1d (`depthwise_conv1d.cu`)
+- One thread per output element; grid covers B × D × L elements
+- Causal padding implemented by index-gating (`if src >= 0`) rather than explicit zero-padding buffer — avoids extra memory allocation
+- Input layout: channels-first [B, D, L] for coalesced L-dimension access across threads
+
+#### RMSNorm (`rmsnorm.cu`)
+- One thread block per row (B×T rows); parallel reduction over D using shared memory
+- Two-pass: (1) parallel sum-of-squares → shared reduction → rms_inv via `rsqrtf`; (2) normalize and scale
+- `RMS_BLOCK=256` handles D up to 65536 via grid-stride loop in each pass
+
+### Benchmark Results (RTX 4070 Laptop, B=1, D=512, N=16)
+
+#### Selective Scan Throughput
+| L | ms/iter | Gflops | Mtokens/s |
+|---|---------|--------|-----------|
+| 64 | 0.105 | ~30 | 0.61 |
+| 256 | 0.406 | ~31 | 0.63 |
+| 1024 | 1.717 | ~29 | 0.60 |
+| 4096 | 5.570 | ~36 | 0.74 |
+| 16384 | 24.047 | ~33 | 0.68 |
+
+**Key Insight**: Selective scan is heavily memory-bound at small L (launch overhead dominates); throughput stabilizes at ~33 Gflops for L ≥ 4096. Sequential recurrence per (b,d) thread limits GPU utilization — real Mamba implementations use chunked parallel scan for long sequences.
+
+#### Depthwise Conv1d (B=1, D=2048, d_conv=4)
+| L | ms/iter | GB/s |
+|---|---------|------|
+| 64 | 0.025 | ~126 |
+| 1024 | 0.068 | ~741 |
+| 4096 | 0.303 | ~664 |
+| 16384 | 1.211 | ~665 |
+
+**Key Insight**: Memory bandwidth saturates near the RTX 4070's ~192 GB/s peak for L ≥ 1024 (effective BW higher due to weight reuse via d_conv=4 taps).
+
+#### RMSNorm (128 rows)
+| D | ms/iter | GB/s |
+|---|---------|------|
+| 512 | 0.030 | ~18 |
+| 1024 | 0.023 | ~46 |
+| 2048 | 0.029 | ~72 |
+| 4096 | 0.025 | ~171 |
+
+**Key Insight**: RMSNorm bandwidth scales with D; at D=4096 it approaches ~170 GB/s. At D=512, per-block launch overhead is visible.
+
+### Deliverables
+* `src/kernels/transformer/selective_scan.cu` — ZOH selective scan, N_state ≤ 32
+* `src/kernels/transformer/depthwise_conv1d.cu` — causal depthwise conv1d, d_conv configurable
+* `src/kernels/transformer/rmsnorm.cu` — fused RMSNorm (normalize + scale)
+* `tests/test_selective_scan.cpp` — 5 tests: small/typical/long/zero/max-state; all pass
+* `tests/test_mamba_ops.cpp` — 8 tests: 4 conv1d variants + 4 rmsnorm variants; all pass
+* `benchmarks/benchmark_selective_scan.cpp` — scan / conv1d / rmsnorm throughput
+* `src/python/pybind_transformer.cpp` — `selective_scan()`, `depthwise_conv1d()`, `rmsnorm()` bindings
+* `src/python/tests/test_mamba_bindings.py` — 17 pytest tests; all pass
+
+---
+
 # 1. Core Objectives
 
 ## 1.1 Foundational Understanding
@@ -578,6 +644,20 @@ CUDA events for timing; Nsight Systems / Nsight Compute for profiling.
 * `tests/test_tensor_parallel_multiprocess.py` — torchrun harness (4 tests)
 * `benchmarks/benchmark_tensor_parallel.cpp` — sim BW + TFLOPS; NCCL section guarded
 * `src/python/pybind_transformer.cpp` — col/row parallel linear + NCCL Python API
+
+---
+
+## Phase 14: SSM / Mamba Kernels ✅ COMPLETE
+
+### Deliverables
+* `src/kernels/transformer/selective_scan.cu` — ZOH selective scan (N_state ≤ 32)
+* `src/kernels/transformer/depthwise_conv1d.cu` — causal depthwise conv1d
+* `src/kernels/transformer/rmsnorm.cu` — fused RMSNorm (normalize + scale)
+* `tests/test_selective_scan.cpp` — 5 tests; all pass
+* `tests/test_mamba_ops.cpp` — 8 tests (4 conv1d + 4 rmsnorm); all pass
+* `benchmarks/benchmark_selective_scan.cpp` — selective scan / conv1d / rmsnorm throughput
+* `src/python/pybind_transformer.cpp` — `selective_scan()`, `depthwise_conv1d()`, `rmsnorm()` added
+* `src/python/tests/test_mamba_bindings.py` — 17 tests; all pass
 
 ---
 

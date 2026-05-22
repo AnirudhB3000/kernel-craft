@@ -91,6 +91,23 @@ extern "C" void launch_row_parallel_linear(
     const float* d_x_rank, const float* d_W, float* d_out,
     int M, int N, int K_rank, cudaStream_t stream);
 
+// Phase 14: Mamba SSM kernels
+extern "C" void launch_selective_scan(
+    const float* d_u,     const float* d_A_log,
+    const float* d_B,     const float* d_C,
+    const float* d_delta, float* d_y,
+    int B_, int L, int D, int N_state,
+    cudaStream_t stream);
+
+extern "C" void launch_depthwise_conv1d(
+    const float* d_x, const float* d_w, const float* d_bias,
+    float* d_y, int B_, int D, int L, int d_conv,
+    cudaStream_t stream);
+
+extern "C" void launch_rmsnorm(
+    const float* d_x, const float* d_g, float* d_y,
+    int rows, int D, float eps, cudaStream_t stream);
+
 // Phase 13: NCCL collectives
 extern "C" void nccl_comm_init_all(void** comms, int num_comms, const int* devs);
 extern "C" void nccl_comm_destroy(void* comm);
@@ -604,6 +621,180 @@ void py_nccl_group_start() { nccl_group_start(); }
 void py_nccl_group_end()   { nccl_group_end();   }
 
 // ---------------------------------------------------------------------------
+// Phase 14: Mamba SSM wrappers
+// ---------------------------------------------------------------------------
+
+/**
+ * \brief Mamba-1 selective scan.
+ *
+ * :param u:      float32 numpy [B, L, D] — input.
+ * :param A_log:  float32 numpy [D, N]    — log-scale state decay.
+ * :param B:      float32 numpy [B, L, N] — input projection.
+ * :param C:      float32 numpy [B, L, N] — output projection.
+ * :param delta:  float32 numpy [B, L, D] — timestep.
+ * :return:       float32 numpy [B, L, D] — output.
+ */
+py::array_t<float> py_selective_scan(
+    py::array_t<float> u,
+    py::array_t<float> A_log,
+    py::array_t<float> B,
+    py::array_t<float> C,
+    py::array_t<float> delta)
+{
+    auto ub = u.request(), Ab = A_log.request(),
+         Bb = B.request(), Cb = C.request(), db = delta.request();
+
+    if (ub.ndim != 3 || db.ndim != 3)
+        throw std::runtime_error("u and delta must be 3-D [B, L, D]");
+    if (Ab.ndim != 2)
+        throw std::runtime_error("A_log must be 2-D [D, N]");
+    if (Bb.ndim != 3 || Cb.ndim != 3)
+        throw std::runtime_error("B and C must be 3-D [B, L, N]");
+
+    int B_ = (int)ub.shape[0];
+    int L  = (int)ub.shape[1];
+    int D  = (int)ub.shape[2];
+    int N  = (int)Ab.shape[1];
+
+    if ((int)Ab.shape[0] != D)
+        throw std::runtime_error("A_log.shape[0] must equal D");
+    if ((int)Bb.shape[2] != N || (int)Cb.shape[2] != N)
+        throw std::runtime_error("B and C must have N state dimensions");
+
+    size_t uD_bytes  = (size_t)B_ * L * D * sizeof(float);
+    size_t uN_bytes  = (size_t)B_ * L * N * sizeof(float);
+    size_t AN_bytes  = (size_t)D * N        * sizeof(float);
+
+    float *du  = (float*)device_alloc(uD_bytes);
+    float *dAl = (float*)device_alloc(AN_bytes);
+    float *dB  = (float*)device_alloc(uN_bytes);
+    float *dC  = (float*)device_alloc(uN_bytes);
+    float *dd  = (float*)device_alloc(uD_bytes);
+    float *dy  = (float*)device_alloc(uD_bytes);
+
+    h2d(du,  ub.ptr, uD_bytes);
+    h2d(dAl, Ab.ptr, AN_bytes);
+    h2d(dB,  Bb.ptr, uN_bytes);
+    h2d(dC,  Cb.ptr, uN_bytes);
+    h2d(dd,  db.ptr, uD_bytes);
+
+    launch_selective_scan(du, dAl, dB, dC, dd, dy, B_, L, D, N, 0);
+    cudaDeviceSynchronize();
+
+    std::vector<float> out((size_t)B_ * L * D);
+    d2h(out.data(), dy, uD_bytes);
+
+    cudaFree(du); cudaFree(dAl); cudaFree(dB);
+    cudaFree(dC); cudaFree(dd);  cudaFree(dy);
+
+    return py::array_t<float>(
+        std::vector<ssize_t>{B_, L, D}, out.data());
+}
+
+/**
+ * \brief Causal depthwise conv1d (channels-first layout).
+ *
+ * :param x:      float32 numpy [B, D, L] — input.
+ * :param w:      float32 numpy [D, d_conv] — weight.
+ * :param bias:   float32 numpy [D] or None.
+ * :return:       float32 numpy [B, D, L] — output.
+ */
+py::array_t<float> py_depthwise_conv1d(
+    py::array_t<float> x,
+    py::array_t<float> w,
+    py::object bias_obj)
+{
+    auto xb = x.request(), wb = w.request();
+    if (xb.ndim != 3)
+        throw std::runtime_error("x must be 3-D [B, D, L]");
+    if (wb.ndim != 2)
+        throw std::runtime_error("w must be 2-D [D, d_conv]");
+
+    int B_     = (int)xb.shape[0];
+    int D      = (int)xb.shape[1];
+    int L      = (int)xb.shape[2];
+    int d_conv = (int)wb.shape[1];
+
+    if ((int)wb.shape[0] != D)
+        throw std::runtime_error("w.shape[0] must equal D");
+
+    size_t x_bytes = (size_t)B_ * D * L * sizeof(float);
+    size_t w_bytes = (size_t)D * d_conv  * sizeof(float);
+
+    float *gx = (float*)device_alloc(x_bytes);
+    float *gw = (float*)device_alloc(w_bytes);
+    float *gy = (float*)device_alloc(x_bytes);
+    float *gbias = nullptr;
+
+    h2d(gx, xb.ptr, x_bytes);
+    h2d(gw, wb.ptr, w_bytes);
+
+    if (!bias_obj.is_none()) {
+        auto ba = bias_obj.cast<py::array_t<float>>().request();
+        gbias = (float*)device_alloc((size_t)D * sizeof(float));
+        h2d(gbias, ba.ptr, (size_t)D * sizeof(float));
+    }
+
+    launch_depthwise_conv1d(gx, gw, gbias, gy, B_, D, L, d_conv, 0);
+    cudaDeviceSynchronize();
+
+    std::vector<float> out((size_t)B_ * D * L);
+    d2h(out.data(), gy, x_bytes);
+
+    cudaFree(gx); cudaFree(gw); cudaFree(gy);
+    if (gbias) cudaFree(gbias);
+
+    return py::array_t<float>(
+        std::vector<ssize_t>{B_, D, L}, out.data());
+}
+
+/**
+ * \brief RMSNorm: normalize each row by root-mean-square then scale.
+ *
+ * :param x:    float32 numpy [rows, D] — input.
+ * :param g:    float32 numpy [D]       — scale weight.
+ * :param eps:  float — stability term (default 1e-6).
+ * :return:     float32 numpy [rows, D] — output.
+ */
+py::array_t<float> py_rmsnorm(
+    py::array_t<float> x,
+    py::array_t<float> g,
+    float eps = 1e-6f)
+{
+    auto xb = x.request(), gb = g.request();
+    if (xb.ndim != 2)
+        throw std::runtime_error("x must be 2-D [rows, D]");
+    if (gb.ndim != 1)
+        throw std::runtime_error("g must be 1-D [D]");
+
+    int rows = (int)xb.shape[0];
+    int D    = (int)xb.shape[1];
+    if ((int)gb.shape[0] != D)
+        throw std::runtime_error("g.shape[0] must equal D");
+
+    size_t x_bytes = (size_t)rows * D * sizeof(float);
+    size_t g_bytes = (size_t)D         * sizeof(float);
+
+    float *gx = (float*)device_alloc(x_bytes);
+    float *gg = (float*)device_alloc(g_bytes);
+    float *gy = (float*)device_alloc(x_bytes);
+
+    h2d(gx, xb.ptr, x_bytes);
+    h2d(gg, gb.ptr, g_bytes);
+
+    launch_rmsnorm(gx, gg, gy, rows, D, eps, 0);
+    cudaDeviceSynchronize();
+
+    std::vector<float> out((size_t)rows * D);
+    d2h(out.data(), gy, x_bytes);
+
+    cudaFree(gx); cudaFree(gg); cudaFree(gy);
+
+    return py::array_t<float>(
+        std::vector<ssize_t>{rows, D}, out.data());
+}
+
+// ---------------------------------------------------------------------------
 // Module definition
 // ---------------------------------------------------------------------------
 
@@ -669,6 +860,19 @@ PYBIND11_MODULE(kernel_craft_transformer, m) {
         "Start NCCL group (bracket multi-rank calls in one process)");
     m.def("nccl_group_end",    &py_nccl_group_end,
         "End NCCL group and flush pending collectives");
+
+    // Phase 14: Mamba SSM primitives
+    m.def("selective_scan", &py_selective_scan,
+        py::arg("u"), py::arg("A_log"), py::arg("B"), py::arg("C"), py::arg("delta"),
+        "Mamba-1 selective scan: u[B,L,D] → y[B,L,D]");
+
+    m.def("depthwise_conv1d", &py_depthwise_conv1d,
+        py::arg("x"), py::arg("w"), py::arg("bias") = py::none(),
+        "Causal depthwise conv1d (channels-first [B,D,L]); bias may be None");
+
+    m.def("rmsnorm", &py_rmsnorm,
+        py::arg("x"), py::arg("g"), py::arg("eps") = 1e-6f,
+        "RMSNorm: normalize [rows,D] by root-mean-square then scale by g[D]");
 
 #ifdef HAVE_NCCL
     m.attr("HAVE_NCCL") = true;

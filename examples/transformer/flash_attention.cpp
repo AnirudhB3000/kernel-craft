@@ -67,6 +67,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <vector>
 #include <cuda_runtime.h>
 
 /**

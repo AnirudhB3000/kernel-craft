@@ -35,6 +35,9 @@ vllm = [
 torch = [
     "torch>=2.1",
 ]
+triton = [
+    "triton>=2.1",
+]
 
 [project.urls]
 Homepage = "https://github.com/anirudhb3000/kernel-craft"

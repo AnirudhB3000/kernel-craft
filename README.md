@@ -112,6 +112,9 @@ backend.
 - **Speculative Decoding** (`src/kernels/transformer/speculative_decoding.cu`) — rejection-sampling draft token verification
 - **Tensor Parallelism** (`src/kernels/transformer/tensor_parallel.cu`) — ring all-reduce, all-gather, column-parallel and row-parallel linear (tiled SGEMM)
 - **NCCL Collectives** (`src/kernels/transformer/tensor_parallel_nccl.cu`) — NCCL-backed all-reduce and all-gather; compiles stub fallback when NCCL is not installed
+- **Selective Scan** (`src/kernels/transformer/selective_scan.cu`) — Mamba-1 ZOH recurrence over `[B, L, D]`; max error < 1e-8 vs CPU reference
+- **Depthwise Conv1d** (`src/kernels/transformer/depthwise_conv1d.cu`) — causal depthwise conv1d with configurable `d_conv`; channels-first layout
+- **RMSNorm** (`src/kernels/transformer/rmsnorm.cu`) — fused normalize + scale in a single pass; supports D up to 65536
 
 ### Pipeline Kernels
 
@@ -165,10 +168,11 @@ cd build && make run_benchmarks         # C++ benchmarks
 cd src/python
 source venv/bin/activate
 pytest tests/test_bindings.py tests/test_transformer_bindings.py -v   # unit (conv + transformer)
+pytest tests/test_mamba_bindings.py -v                                 # Mamba/SSM kernels
 pytest tests/test_vllm_backend.py -v                                   # vLLM backend integration
 ```
 
-Expected: **89 tests pass, 0 skip** (with torch 2.11.0+cu130 + vLLM 0.21.0).
+Expected: **106 tests pass, 0 skip** (with torch 2.11.0+cu130 + vLLM 0.21.0).
 
 ### Running a single test binary
 
@@ -179,6 +183,8 @@ Expected: **89 tests pass, 0 skip** (with torch 2.11.0+cu130 + vLLM 0.21.0).
 ./build/bin/test_fp8_quant
 ./build/bin/test_speculative_decoding
 ./build/bin/test_tensor_parallel
+./build/bin/test_selective_scan
+./build/bin/test_mamba_ops
 ./build/bin/test_conv_naive
 ./build/bin/test_conv_tiled
 ```
@@ -208,6 +214,7 @@ Or run individual binaries:
 ./build/bin/benchmark_paged_attention
 ./build/bin/benchmark_quant
 ./build/bin/benchmark_tensor_parallel     # sim BW + col/row parallel TFLOPS
+./build/bin/benchmark_selective_scan      # scan / conv1d / rmsnorm throughput
 ./build/bin/benchmark_memory_pool         [width] [height] [iterations]
 ./build/bin/benchmark_cuda_graphs         [width] [height] [iterations]
 ./build/bin/benchmark_mixed_precision     [width] [height] [iterations]
@@ -263,6 +270,33 @@ weights_fp32 = kc.quant_int4_dequant(packed_weights, scales, group_size=128)
 ```python
 q_data, scale = kc.fp8_quantize(tensor, mode="per_token")
 recovered = kc.fp8_dequantize(q_data, scale, mode="per_token")
+```
+
+### Mamba / SSM Kernels
+
+```python
+import kernel_craft_python as kc
+import numpy as np
+
+B, L, D, N = 1, 1024, 512, 16
+u     = np.random.randn(B, L, D).astype(np.float32)
+A_log = np.random.randn(D, N).astype(np.float32)
+B_ssm = np.random.randn(B, L, N).astype(np.float32)
+C     = np.random.randn(B, L, N).astype(np.float32)
+delta = np.abs(np.random.randn(B, L, D).astype(np.float32))
+
+y = kc.selective_scan(u, A_log, B_ssm, C, delta)  # [B, L, D]
+
+# Causal depthwise conv1d (channels-first: [B, D, L])
+x = np.random.randn(B, D, L).astype(np.float32)
+w = np.random.randn(D, 4).astype(np.float32)       # d_conv=4
+b = np.zeros(D, dtype=np.float32)
+y_conv = kc.depthwise_conv1d(x, w, b)              # [B, D, L]
+
+# RMSNorm
+x_norm = np.random.randn(B * L, D).astype(np.float32)
+g      = np.ones(D, dtype=np.float32)
+y_norm = kc.rmsnorm(x_norm, g)                     # [B*L, D]
 ```
 
 ### Tensor Parallelism
@@ -359,6 +393,16 @@ All results on RTX 4070 Laptop (SM 8.9, 8 GB VRAM, CUDA 12.0).
 
 Note: simulation bandwidth uses single-GPU device-copy; real NCCL all-reduce over NVLink would approach memory bandwidth.
 
+### Mamba / SSM Kernels (RTX 4070 Laptop, B=1, D=512, N=16)
+
+| Kernel | Config | Result |
+|--------|--------|--------|
+| Selective scan | L=1024 | ~1.72 ms, ~29 Gflops, ~0.60 Mtok/s |
+| Selective scan | L=4096 | ~5.57 ms, ~36 Gflops, ~0.74 Mtok/s |
+| Depthwise conv1d | D=2048, L=1024, d_conv=4 | ~0.068 ms, ~741 GB/s |
+| Depthwise conv1d | D=2048, L=4096, d_conv=4 | ~0.303 ms, ~664 GB/s |
+| RMSNorm | 128 rows, D=4096 | ~0.025 ms, ~171 GB/s |
+
 ## Directory Structure
 
 ```
@@ -384,7 +428,10 @@ kernel-craft/
 │   │       ├── fp8_quant.cu
 │   │       ├── speculative_decoding.cu
 │   │       ├── tensor_parallel.cu
-│   │       └── tensor_parallel_nccl.cu
+│   │       ├── tensor_parallel_nccl.cu
+│   │       ├── selective_scan.cu
+│   │       ├── depthwise_conv1d.cu
+│   │       └── rmsnorm.cu
 │   ├── pipelines/
 │   │   ├── pipeline_fused.cu
 │   │   ├── pipeline_separate.cu
@@ -419,6 +466,7 @@ kernel-craft/
 │   ├── benchmark_paged_attention.cpp
 │   ├── benchmark_quant.cpp
 │   ├── benchmark_tensor_parallel.cpp
+│   ├── benchmark_selective_scan.cpp
 │   ├── benchmark_pipeline.cpp
 │   ├── benchmark_memory_pool.cpp
 │   ├── benchmark_cuda_graphs.cpp
@@ -437,6 +485,8 @@ kernel-craft/
 │   ├── test_speculative_decoding.cpp
 │   ├── test_tensor_parallel.cpp
 │   ├── test_tensor_parallel_multiprocess.py
+│   ├── test_selective_scan.cpp
+│   ├── test_mamba_ops.cpp
 │   └── ... (conv variants, pipelines, performance infrastructure)
 ├── CMakeLists.txt
 └── README.md

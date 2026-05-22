@@ -47,6 +47,7 @@ EXAMPLES = [
     ("transformer/fp8_quant",           "FP8 E4M3 quantize / dequantize",          ["kernel_craft_transformer"]),
     ("transformer/speculative_decoding","Draft token rejection sampling",           ["kernel_craft_transformer"]),
     ("transformer/tensor_parallel",     "Col/row parallel linear + collectives",    ["kernel_craft_transformer"]),
+    ("transformer/mamba_ops",           "Selective scan, depthwise Conv1d, RMSNorm",["kernel_craft_transformer"]),
     # ---- vllm/ --------------------------------------------------------------
     ("vllm/torch_ops",  "torch.ops.kernel_craft namespace",          ["torch"]),
     ("vllm/opt125m",    "OPT-125M with kernel-craft vLLM backend",

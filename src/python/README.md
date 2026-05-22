@@ -99,6 +99,33 @@ recovered = kc.fp8_dequantize(q_data, scale, mode="per_token")
 accepted_mask = kc.speculative_decode(draft_probs, target_probs, draft_tokens)
 ```
 
+### Mamba / SSM kernels
+
+```python
+import kernel_craft_python as kc
+import numpy as np
+
+B, L, D, N = 1, 1024, 512, 16
+u     = np.random.randn(B, L, D).astype(np.float32)
+A_log = np.random.randn(D, N).astype(np.float32)
+B_ssm = np.random.randn(B, L, N).astype(np.float32)
+C     = np.random.randn(B, L, N).astype(np.float32)
+delta = np.abs(np.random.randn(B, L, D).astype(np.float32))
+
+y = kc.selective_scan(u, A_log, B_ssm, C, delta)   # [B, L, D]
+
+# Causal depthwise conv1d (channels-first: [B, D, L])
+x = np.random.randn(B, D, L).astype(np.float32)
+w = np.random.randn(D, 4).astype(np.float32)        # d_conv=4
+b = np.zeros(D, dtype=np.float32)
+y_conv = kc.depthwise_conv1d(x, w, b)               # [B, D, L]
+
+# RMSNorm
+x_norm = np.random.randn(B * L, D).astype(np.float32)
+g      = np.ones(D, dtype=np.float32)
+y_norm = kc.rmsnorm(x_norm, g)                      # [B*L, D]
+```
+
 ### Tensor parallelism (col/row parallel linear + NCCL)
 
 ```python
@@ -168,6 +195,9 @@ out = ops.flash_attention(Q, K, V, causal=True)
 | `fp8_quantize` | `(tensor, mode="per_token")` | `(ndarray, ndarray)` |
 | `fp8_dequantize` | `(q_data, scale, mode="per_token")` | ndarray |
 | `speculative_decode` | `(draft_probs, target_probs, draft_tokens)` | ndarray |
+| `selective_scan` | `(u, A_log, B, C, delta)` | ndarray [B, L, D] |
+| `depthwise_conv1d` | `(x[B,D,L], w[D,d_conv], bias[D])` | ndarray [B, D, L] |
+| `rmsnorm` | `(x[rows,D], g[D], eps=1e-6)` | ndarray [rows, D] |
 | `col_parallel_linear` | `(x[M,K], W[N_rank,K])` | ndarray [M, N_rank] |
 | `row_parallel_linear` | `(x_rank[M,K_rank], W[N,K_rank])` | ndarray [M, N] |
 | `ring_allreduce` | `(buf)` | None (in-place, simulation) |

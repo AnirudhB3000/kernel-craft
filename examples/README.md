@@ -51,6 +51,9 @@ Build individually: `cmake --build build --target <name>`
 | `example_flash_attention` | `example_flash_attention.cpp` | FlashAttention forward pass. Online-softmax algorithm, MHA vs GQA (`H_kv`), causal masking. Prefill routing in LLM serving. |
 | `example_paged_attention` | `example_paged_attention.cpp` | PagedAttention decode. Physical-page / block-table design (virtual-memory analogy). vLLM KV-cache integration. |
 | `example_tensor_parallel` | `example_tensor_parallel.cpp` | Column-parallel and row-parallel linear layers. Simulated ring all-reduce / all-gather. Megatron-LM FFN pattern. |
+| `selective_scan` | `transformer/selective_scan.cpp` | ZOH selective scan (Mamba SSM). Online recurrence, register-resident hidden state. CPU reference comparison. |
+| `depthwise_conv1d` | `transformer/depthwise_conv1d.cpp` | Causal depthwise Conv1d (Mamba short-conv mixer). Causal index-gating, bandwidth analysis (GB/s). |
+| `rmsnorm` | `transformer/rmsnorm.cpp` | Fused RMSNorm (Mamba / LLaMA). Two-pass parallel reduction, bandwidth vs D sweep. |
 
 ### TensorRT (optional — requires `-DHAVE_TENSORRT=ON`)
 
@@ -100,6 +103,7 @@ Install Python deps: `pip install -r examples/python/requirements.txt`
 | `example_fp8_quant.py` | `kct.fp8_quantize`, `kct.fp8_dequantize`, `kct.smoothquant_scale` | Per-token vs per-tensor scales. FP8 vs INT8 error characteristics. SmoothQuant. vLLM `quantization='fp8'` pointer. |
 | `example_speculative_decoding.py` | `kct.speculative_decode(...)` | Three scenarios: all-accept, all-reject, mixed α≈0.7. Residual distribution correctness. Expected speedup formula. |
 | `example_tensor_parallel.py` | `kct.col_parallel_linear`, `kct.row_parallel_linear`, `kct.ring_allreduce`, `kct.allgather` | Megatron-LM MLP block end-to-end. Correctness vs full matmul. NCCL integration note. |
+| `mamba_ops.py` | `kct.selective_scan`, `kct.depthwise_conv1d`, `kct.rmsnorm` | All three Mamba Phase 14 ops in one file. Correctness vs NumPy, throughput/BW sweeps, Mamba block context. |
 
 ### PyTorch ops bridge
 
@@ -141,10 +145,13 @@ examples/
 │   ├── preprocess.cpp                  resize (bilinear) → normalize → flip
 │   └── cuda_graphs.cpp                 graph capture / replay vs separate launches
 │
-├── transformer/                      ← LLM attention and parallelism examples
+├── transformer/                      ← LLM attention, parallelism, and SSM examples
 │   ├── flash_attention.cpp             MHA / GQA / causal; prefill stage
 │   ├── paged_attention.cpp             paged KV-cache; decode stage
-│   └── tensor_parallel.cpp             col/row parallel linear + collectives
+│   ├── tensor_parallel.cpp             col/row parallel linear + collectives
+│   ├── selective_scan.cpp              ZOH SSM recurrence (Mamba)
+│   ├── depthwise_conv1d.cpp            causal depthwise Conv1d (Mamba mixer)
+│   └── rmsnorm.cpp                     fused RMSNorm (Mamba / LLaMA)
 │
 ├── tensorrt/                         ← TensorRT plugin (optional, -DHAVE_TENSORRT=ON)
 │   └── plugin_cnn.cpp                  small CNN via IPluginV2DynamicExt
@@ -165,7 +172,8 @@ examples/
     │   ├── flash_attention.py          MHA, causal MHA, GQA; CPU reference
     │   ├── fp8_quant.py                FP8 E4M3 quantize/dequantize, SmoothQuant
     │   ├── speculative_decoding.py     reject-sampling verification; 3 scenarios
-    │   └── tensor_parallel.py          Megatron-LM MLP block end-to-end
+    │   ├── tensor_parallel.py          Megatron-LM MLP block end-to-end
+    │   └── mamba_ops.py                selective_scan + depthwise_conv1d + rmsnorm
     │
     └── vllm/                         ← PyTorch ops bridge + vLLM integration
         ├── torch_ops.py                torch.ops.kernel_craft namespace + torch.compile

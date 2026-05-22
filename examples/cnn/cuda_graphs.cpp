@@ -68,7 +68,7 @@ extern "C" void launch_conv_tiled(const float* d_input, const float* d_kernel,
  * \param[in,out] d_data  float32 device array [size].
  * \param[in]     size    Number of elements.
  */
-extern "C" void launch_relu(float* d_data, int size);
+extern "C" void relu(float* d_data, int size);
 
 /**
  * \brief In-place scalar bias addition (src/pipelines/pipeline_separate.cu).
@@ -76,7 +76,7 @@ extern "C" void launch_relu(float* d_data, int size);
  * \param[in]     bias    Scalar bias to add to every element.
  * \param[in]     size    Number of elements.
  */
-extern "C" void launch_add_bias(float* d_data, float bias, int size);
+extern "C" void add_bias(float* d_data, float bias, int size);
 
 #define W 1024
 #define H 1024
@@ -93,8 +93,8 @@ static float benchmark_separate(const float* d_in, const float* d_ker,
     cudaEventRecord(t0);
     for (int i = 0; i < ITERS; ++i) {
         launch_conv_tiled(d_in, d_ker, d_out, W, H, K, block);
-        launch_relu(d_out, W * H);
-        launch_add_bias(d_out, 0.1f, W * H);
+        relu(d_out, W * H);
+        add_bias(d_out, 0.1f, W * H);
     }
     cudaEventRecord(t1);
     cudaEventSynchronize(t1);
@@ -127,8 +127,8 @@ static float benchmark_graph(const float* d_in, const float* d_ker,
     cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
 
     launch_conv_tiled(d_in, d_ker, d_out, W, H, K, block);
-    launch_relu(d_out, W * H);
-    launch_add_bias(d_out, 0.1f, W * H);
+    relu(d_out, W * H);
+    add_bias(d_out, 0.1f, W * H);
 
     cudaStreamEndCapture(stream, &graph);
 

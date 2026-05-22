@@ -55,6 +55,9 @@ add_example(cuda_graphs     cnn)   # graph capture / replay vs separate launches
 add_example(flash_attention  transformer)  # MHA / GQA / causal; prefill stage
 add_example(paged_attention  transformer)  # paged KV-cache; decode stage
 add_example(tensor_parallel  transformer)  # col/row parallel linear + collectives
+add_example(selective_scan   transformer)  # ZOH SSM recurrence (Mamba)
+add_example(depthwise_conv1d transformer)  # causal depthwise Conv1d (Mamba mixer)
+add_example(rmsnorm          transformer)  # fused RMSNorm (Mamba / LLaMA)
 
 # ---------------------------------------------------------------------------
 # examples/tensorrt/  — TensorRT plugin (optional)
@@ -97,6 +100,9 @@ set(_CORE_EXAMPLES
     flash_attention
     paged_attention
     tensor_parallel
+    selective_scan
+    depthwise_conv1d
+    rmsnorm
 )
 
 # build_examples — compile all non-TRT examples
