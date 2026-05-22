@@ -1,0 +1,24 @@
+# Python dependencies for examples/python/
+#
+# Install:
+#   pip install -r examples/python/requirements.txt
+#
+# The kernel-craft extension modules (kernel_craft_python,
+# kernel_craft_transformer) must be built first:
+#   cmake --build build --target kernel_craft_python kernel_craft_transformer
+#   pip install -e src/python   (or add build/ to PYTHONPATH)
+
+# Core numerical stack — required by all examples
+numpy>=1.24
+
+# PyTorch — required by torch_conv_*, torch_ops, mixed_precision examples
+# Install the CUDA-enabled wheel matching your CUDA version from pytorch.org
+torch>=2.0
+
+# vLLM — required by example_vllm_opt125m.py only
+# Pin to the version validated against the kernel-craft vLLM backend
+# (see src/python/kernel_craft_vllm_backend.py for compatibility notes)
+# vllm==0.21.0
+
+# Optional: image I/O for saving convolution outputs as PNGs
+Pillow>=9.0

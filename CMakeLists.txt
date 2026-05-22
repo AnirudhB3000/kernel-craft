@@ -477,37 +477,7 @@ add_custom_target(run_tests
     COMMENT "Release gate: unit → python unit → integration → python integration → benchmarks"
 )
 
-# Example executables
-add_executable(example_conv_naive examples/example_conv_naive.cpp)
-target_link_libraries(example_conv_naive PRIVATE kernels)
-
-add_executable(example_conv_tiled examples/example_conv_tiled.cpp)
-target_link_libraries(example_conv_tiled PRIVATE kernels)
-
-add_executable(example_preprocess examples/example_preprocess.cpp)
-target_link_libraries(example_preprocess PRIVATE kernels)
-
-add_executable(example_fused_pipeline examples/example_fused_pipeline.cpp)
-target_link_libraries(example_fused_pipeline PRIVATE kernels)
-
-# TensorRT example (optional, only if TensorRT is available)
-if(HAVE_TENSORRT)
-    add_executable(example_tensorrt_usage examples/tensorrt/example_plugin_usage.cpp
-        src/tensorrt/plugin_wrapper.cpp
-        src/kernels/inference/conv_int8.cu
-        src/kernels/inference/conv_activation_fusion.cu)
-    target_include_directories(example_tensorrt_usage PRIVATE ${TENSORRT_INCLUDE_DIR})
-    target_link_libraries(example_tensorrt_usage PRIVATE ${TENSORRT_ROOT}/lib/libnvinfer.so CUDA::cudart)
-    target_compile_definitions(example_tensorrt_usage PRIVATE HAVE_TENSORRT)
-endif()
-
-# Target to build and run all examples (use: make examples)
-add_custom_target(examples
-    COMMAND ${CMAKE_COMMAND} --build . --target example_conv_naive example_conv_tiled example_preprocess example_fused_pipeline
-    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/bin/example_conv_naive
-    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/bin/example_conv_tiled
-    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/bin/example_preprocess
-    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/bin/example_fused_pipeline
-    COMMENT "Building and running all examples"
-    DEPENDS example_conv_naive example_conv_tiled example_preprocess example_fused_pipeline
-)
+# ---------------------------------------------------------------------------
+# Examples (see examples/CMakeLists.txt for individual target definitions)
+# ---------------------------------------------------------------------------
+add_subdirectory(examples)
