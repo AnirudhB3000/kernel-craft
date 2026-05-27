@@ -37,6 +37,7 @@ torch = [
 ]
 triton = [
     "triton>=2.1",
+    "torch>=2.1",
 ]
 
 [project.urls]
@@ -46,7 +47,7 @@ Homepage = "https://github.com/anirudhb3000/kernel-craft"
 # Use: pip install kernel-craft --extra-index-url https://download.pytorch.org/whl/cu121
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["kernel_craft_python*", "kernel_craft_python.pyi"]
+include = ["kernel_craft_python*", "kernel_craft_python.pyi", "kernel_craft_triton*"]
 
 [tool.setuptools.package-data]
 kernel_craft_python = ["*.so", "*.pyi"]

@@ -661,6 +661,82 @@ CUDA events for timing; Nsight Systems / Nsight Compute for profiling.
 
 ---
 
+## Phase 15: Triton Integration ✅ COMPLETE
+
+### Design Decisions
+
+#### FlashAttention (`flash_attention_triton.py`)
+- Tiled online-softmax FlashAttention-2 in Triton; one program per (batch, head, query-tile)
+- GQA: `kv_head = head_id * H_kv // H` maps Q heads to KV heads
+- K loaded as `[BLOCK_N, HEAD_DIM]` (row-major, coalesced) then `tl.trans(k)` for Q@K^T dot product
+- Causal masking: inner loop bound clamped to `tl.cdiv((start_m+1)*BLOCK_M, BLOCK_N)` so future KV tiles are never loaded
+- Autotuned over `{BLOCK_M, BLOCK_N}` in `{16×16, 32×32, 64×64}`; key = `['N', 'HEAD_DIM']`
+- HEAD_DIM must be in `(16, 32, 64, 128)`; H must be divisible by H_kv
+
+#### Selective Scan (`selective_scan_triton.py`)
+- One Triton program per (batch, channel) pair; L timesteps remain sequential (SSM recurrence is inherently serial along L)
+- `BLOCK_N` computed as `triton.next_power_of_2(N_state)` in the Python wrapper and passed as a constexpr — **not** autotuned, which would pick BLOCK_N=16 for N_state=32 and silently process only half the hidden state
+- Hidden state `h` held in registers across timesteps (size = BLOCK_N ≤ 32)
+- ZOH: `a_bar = exp(dt * a_log)`, `h = a_bar * h + dt * B_t * u_td`, `y = tl.sum(C_t * h)`
+- N_state capped at 32 (Mamba-1 default = 16)
+
+#### INT4 GEMV (`int4_gemv_triton.py`)
+- One program per output row; BLOCK_BYTES packed bytes per loop iteration (autotuned: 32/64/128)
+- Nibble unpacking: low = `p & 0x0F`, high = `(p >> 4) & 0x0F`; sign extension: `lo_s = tl.where(lo >= 8, lo - 16, lo)`
+- Per-group scales and nibble-packed zero-points gathered via index arithmetic
+- Accumulator is a scalar `tl.zeros([], ...)` — using `tl.zeros([1], ...)` causes "please use block pointers" error with `tl.store` to a scalar pointer
+- `acc = acc + tl.sum(...)` pattern (not `+=`) required for Triton scalar accumulation
+
+#### sys.path import ordering
+- Third-party `triton` (and `torch`) must be imported and cached in `sys.modules` **before** `src/triton` is added to `sys.path`, otherwise `import triton` inside kernel files resolves to `src/triton/__init__.py` (circular import)
+
+### Benchmark Results (RTX 4070 Laptop, Triton 3.6.0)
+
+> CUDA ms includes numpy↔GPU transfer; Triton ms is GPU-only — CUDA column is not a fair comparison for throughput, but shows the overhead of the Python binding path.
+
+#### FlashAttention (B=1)
+| Config | Triton ms | Triton Gflops |
+|--------|-----------|---------------|
+| H=8 N=512 d=64 | 0.069 | 7787 |
+| H=8 N=1024 d=64 | 0.170 | 12613 |
+| H=8 N=2048 d=64 | 0.586 | 14671 |
+| H=8 N=1024 d=64 (causal) | 0.127 | 8488 |
+| H=4 N=512 d=64 (GQA 4:2) | 0.048 | 5558 |
+
+**Key Insight**: Triton FlashAttention reaches ~14.7 Tflops at N=2048, well above the CUDA pybind path (~282 Gflops which includes data transfer). Causal is slower in Gflops-reported than full at same N because flops are halved in the formula but launch overhead is the same.
+
+#### Selective Scan (B=1, D=512, N_state=16)
+| L | Triton ms | Mtokens/s |
+|---|-----------|-----------|
+| 64 | 0.065 | 0.98 |
+| 256 | 0.244 | 1.05 |
+| 1024 | 0.877 | 1.17 |
+| 4096 | 3.437 | 1.19 |
+| 16384 | 16.024 | 1.02 |
+
+**Key Insight**: Triton selective scan is ~7–8× faster than the numpy-transfer-inclusive CUDA path and matches the CUDA kernel throughput. Sequential recurrence limits GPU parallelism; chunked parallel scan would be needed for better long-sequence scaling.
+
+#### INT4 GEMV (group_size=128)
+| Config | Triton ms | Triton GB/s |
+|--------|-----------|-------------|
+| r=256 c=4096 | 0.035 | 16.8 |
+| r=1024 c=4096 | 0.089 | 25.3 |
+| r=4096 c=4096 | 0.864 | 10.4 |
+| r=4096 c=11008 | 1.478 | 16.4 |
+
+**Key Insight**: Triton INT4 GEMV bandwidth peaks at ~25 GB/s for r=1024; at r=4096 the kernel becomes compute-bound on nibble unpacking. The CUDA pybind path shows <1 GB/s due to numpy transfer overhead — not a valid comparison for kernel bandwidth.
+
+### Deliverables
+* `src/triton/__init__.py` — re-exports `flash_attention`, `selective_scan`, `int4_gemv`
+* `src/triton/flash_attention_triton.py` — tiled online-softmax FA, GQA, causal masking
+* `src/triton/selective_scan_triton.py` — ZOH Mamba-1 selective scan, N_state ≤ 32
+* `src/triton/int4_gemv_triton.py` — INT4 dequant + GEMV, per-group scale/zero-point
+* `src/python/tests/test_triton_kernels.py` — 15 pytest tests; all pass
+* `benchmarks/benchmark_triton.py` — Triton vs CUDA side-by-side (FA Gflops, scan Mtokens/s, GEMV GB/s)
+* `src/python/pyproject.toml` — `triton` optional dependency group added
+
+---
+
 # 6. Success Criteria
 
 You should be able to:

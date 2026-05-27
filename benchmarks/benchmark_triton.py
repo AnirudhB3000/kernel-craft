@@ -109,7 +109,7 @@ def benchmark_flash_attention():
             K_np = K.cpu().numpy()
             V_np = V.cpu().numpy()
             def cuda_fn():
-                kct.flash_attention(Q_np, K_np, V_np, B, H, H_kv, N, d, causal)
+                kct.flash_attention(Q_np, K_np, V_np, H_kv, causal)
             ms_c = bench_cuda_event(cuda_fn)
             gflops_c = flops / (ms_c * 1e6)
             cuda_str = f"{ms_c:>10.3f} {gflops_c:>12.1f}"
