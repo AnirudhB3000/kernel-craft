@@ -56,6 +56,11 @@ import sys
 from pathlib import Path
 from typing import Optional, Tuple
 
+try:
+    from kernel_craft_otel import kernel_span
+except ImportError:
+    from contextlib import nullcontext as kernel_span
+
 # ---------------------------------------------------------------------------
 # Library discovery
 # ---------------------------------------------------------------------------
@@ -206,10 +211,12 @@ def flash_attention(
     Q, K, V = Q.contiguous(), K.contiguous(), V.contiguous()
     B, H, N, d = Q.shape
     O = torch.zeros(B, H, N, d, dtype=torch.float32, device=Q.device)
-    _get_lib().launch_flash_attention(
-        _ptr(Q), _ptr(K), _ptr(V), _ptr(O),
-        B, H, H_kv, N, d, causal, _stream(),
-    )
+    with kernel_span("flash_attention", batch=B, heads=H, kv_heads=H_kv,
+                     seq_len=N, head_dim=d, causal=causal):
+        _get_lib().launch_flash_attention(
+            _ptr(Q), _ptr(K), _ptr(V), _ptr(O),
+            B, H, H_kv, N, d, causal, _stream(),
+        )
     return O
 
 
@@ -245,11 +252,13 @@ def paged_attention(
     max_blocks = block_table.shape[1]
     O = torch.zeros(B, H, d, dtype=torch.float32, device=Q.device)
 
-    _get_lib().launch_paged_attention(
-        _ptr(Q), _ptr(block_table), _ptr(K_pool), _ptr(V_pool),
-        _ptr(O), _ptr(seq_lens),
-        B, H, H_kv, d, block_size, max_blocks, _stream(),
-    )
+    with kernel_span("paged_attention", batch=B, heads=H, kv_heads=H_kv,
+                     seq_len=int(seq_lens.max().item()), block_size=block_size):
+        _get_lib().launch_paged_attention(
+            _ptr(Q), _ptr(block_table), _ptr(K_pool), _ptr(V_pool),
+            _ptr(O), _ptr(seq_lens),
+            B, H, H_kv, d, block_size, max_blocks, _stream(),
+        )
     return O
 
 
@@ -311,10 +320,11 @@ def int4_gemv(
     zeros  = zeros.contiguous()
     x      = x.contiguous()
     y = torch.zeros(rows, dtype=torch.float32, device=packed.device)
-    _get_lib().launch_gemv_int4(
-        _ptr(packed), _ptr(scales), _ptr(zeros), _ptr(x), _ptr(y),
-        rows, cols, group_size, _stream(),
-    )
+    with kernel_span("int4_gemv", rows=rows, cols=cols, group_size=group_size):
+        _get_lib().launch_gemv_int4(
+            _ptr(packed), _ptr(scales), _ptr(zeros), _ptr(x), _ptr(y),
+            rows, cols, group_size, _stream(),
+        )
     return y
 
 
@@ -335,10 +345,11 @@ def fp8_quantize(
     q      = torch.zeros(rows, cols, dtype=torch.int8, device=x.device)
     n_scales = rows if per_token else 1
     scales = torch.zeros(n_scales, dtype=torch.float32, device=x.device)
-    _get_lib().launch_quantize_fp8(
-        _ptr(x), _ptr(q), _ptr(scales),
-        rows, cols, per_token, _stream(),
-    )
+    with kernel_span("fp8_quantize", rows=rows, cols=cols, per_token=per_token):
+        _get_lib().launch_quantize_fp8(
+            _ptr(x), _ptr(q), _ptr(scales),
+            rows, cols, per_token, _stream(),
+        )
     return q, scales
 
 
@@ -400,12 +411,13 @@ def speculative_verify(
     accepted  = torch.zeros(K, dtype=torch.int32, device=draft_probs.device)
     corrected = torch.zeros(K, dtype=torch.int32, device=draft_probs.device)
 
-    _get_lib().launch_verify_draft_tokens(
-        _ptr(draft_probs), _ptr(target_probs),
-        _ptr(draft_tokens), _ptr(rand_vals), _ptr(rand_vals2),
-        _ptr(accepted), _ptr(corrected),
-        K, vocab, _stream(),
-    )
+    with kernel_span("speculative_verify", num_tokens=K, vocab_size=vocab):
+        _get_lib().launch_verify_draft_tokens(
+            _ptr(draft_probs), _ptr(target_probs),
+            _ptr(draft_tokens), _ptr(rand_vals), _ptr(rand_vals2),
+            _ptr(accepted), _ptr(corrected),
+            K, vocab, _stream(),
+        )
     return accepted, corrected
 
 

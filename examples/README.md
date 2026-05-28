@@ -105,6 +105,28 @@ Install Python deps: `pip install -r examples/python/requirements.txt`
 | `example_tensor_parallel.py` | `kct.col_parallel_linear`, `kct.row_parallel_linear`, `kct.ring_allreduce`, `kct.allgather` | Megatron-LM MLP block end-to-end. Correctness vs full matmul. NCCL integration note. |
 | `mamba_ops.py` | `kct.selective_scan`, `kct.depthwise_conv1d`, `kct.rmsnorm` | All three Mamba Phase 14 ops in one file. Correctness vs NumPy, throughput/BW sweeps, Mamba block context. |
 
+### Triton kernels (Phase 15)
+
+| File | API used | What it demonstrates |
+|---|---|---|
+| `triton_ops.py` | `kernel_craft.triton.flash_attention`, `selective_scan`, `int4_gemv` | All three Triton kernels. FlashAttention MHA/causal/GQA Gflops sweep. Selective-scan correctness vs CPU + Mtokens/s sweep. INT4 GEMV correctness + GB/s sweep. |
+
+```bash
+pip install triton  # or: pip install "kernel-craft[triton]"
+python examples/python/triton/triton_ops.py
+```
+
+### Observability (Phase 16)
+
+| File | What it demonstrates |
+|---|---|
+| `otel_tracing.py` | `kernel_craft_otel.setup_tracing()` + `kernel_span()`. InMemorySpanExporter demo (no external collector). `kernel.cuda_ms` GPU timing attribute. Span parent-child hierarchy (request → prefill/decode → kernel). OTLP / Jaeger setup instructions. |
+
+```bash
+pip install opentelemetry-api opentelemetry-sdk  # optional — graceful no-op without
+python examples/python/observability/otel_tracing.py
+```
+
 ### PyTorch ops bridge
 
 | File | API used | What it demonstrates |
@@ -174,6 +196,12 @@ examples/
     │   ├── speculative_decoding.py     reject-sampling verification; 3 scenarios
     │   ├── tensor_parallel.py          Megatron-LM MLP block end-to-end
     │   └── mamba_ops.py                selective_scan + depthwise_conv1d + rmsnorm
+    │
+    ├── triton/                       ← Triton JIT kernels (Phase 15)
+    │   └── triton_ops.py               FA Gflops, scan Mtokens/s, INT4 GEMV GB/s
+    │
+    ├── observability/                ← OpenTelemetry tracing (Phase 16)
+    │   └── otel_tracing.py             setup_tracing, kernel_span, cuda_ms, Jaeger guide
     │
     └── vllm/                         ← PyTorch ops bridge + vLLM integration
         ├── torch_ops.py                torch.ops.kernel_craft namespace + torch.compile

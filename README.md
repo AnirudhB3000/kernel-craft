@@ -138,11 +138,21 @@ backend.
 - **PagedAttention Plugin** (`src/tensorrt/paged_attention_plugin.cpp`) — TensorRT custom op for paged KV-cache
 - **vLLM PyTorch Plugin** (`src/tensorrt/vllm_plugin_wrapper.cpp`) — TORCH_LIBRARY registration for C++ path
 
+### Triton Kernels
+
+- **FlashAttention** (`src/triton/flash_attention_triton.py`) — tiled online-softmax FA-2 in Triton; GQA, causal masking, autotuned `{BLOCK_M, BLOCK_N}`; reaches ~14.7 Tflops at N=2048
+- **Selective Scan** (`src/triton/selective_scan_triton.py`) — Mamba-1 ZOH recurrence; `BLOCK_N = next_power_of_2(N_state)` constexpr; hidden state held in registers
+- **INT4 GEMV** (`src/triton/int4_gemv_triton.py`) — nibble-unpacking + per-group scale/zero-point dequantization; autotuned `BLOCK_BYTES`; peaks ~25 GB/s at r=1024
+
 ### Python API
 
 - **pybind11 extension** (`src/python/pybind_cuda.cpp`, `pybind_transformer.cpp`) — numpy and PyTorch tensor support
-- **ctypes bridge** (`src/python/kernel_craft_torch_ops.py`) — zero-copy access to `libkernels.so` via `data_ptr()`
-- **vLLM backend** (`src/python/kernel_craft_vllm_backend.py`) — `KernelCraftAttentionBackend` implementing the vLLM 0.21.0 v1 API
+- **ctypes bridge** (`src/python/kernel_craft_torch_ops.py`) — zero-copy access to `libkernels.so` via `data_ptr()`; all 5 kernel methods emit OpenTelemetry spans with CUDA-measured GPU time
+- **vLLM backend** (`src/python/kernel_craft_vllm_backend.py`) — `KernelCraftAttentionBackend` implementing the vLLM 0.21.0 v1 API; request-level spans for prefill/decode
+
+### Observability
+
+- **OpenTelemetry tracing** (`src/python/kernel_craft_otel.py`) — `kernel_span()` context manager records per-kernel CUDA event timing and emits OTEL spans; `setup_tracing()` configures OTLP/Jaeger export; zero overhead when OTEL is not installed
 
 ## Testing
 
@@ -170,9 +180,13 @@ source venv/bin/activate
 pytest tests/test_bindings.py tests/test_transformer_bindings.py -v   # unit (conv + transformer)
 pytest tests/test_mamba_bindings.py -v                                 # Mamba/SSM kernels
 pytest tests/test_vllm_backend.py -v                                   # vLLM backend integration
+pytest tests/test_triton_kernels.py -v                                 # Triton kernels
+pytest tests/test_otel.py -v                                           # OpenTelemetry unit tests
+pytest tests/test_otel_e2e.py -v -m e2e                               # OTEL end-to-end (GPU + opt-125m)
 ```
 
-Expected: **106 tests pass, 0 skip** (with torch 2.11.0+cu130 + vLLM 0.21.0).
+Expected: **128 tests pass, 0 skip** (with torch 2.11.0+cu130 + vLLM 0.21.0 + triton 3.6.0 + opentelemetry-sdk).
+E2E test requires `facebook/opt-125m` cached in `~/.cache/huggingface`.
 
 ### Running a single test binary
 
@@ -221,6 +235,7 @@ Or run individual binaries:
 ./build/bin/benchmark_persistent_kernels  [width] [height] [iterations]
 ./build/bin/benchmark_async_streams       [width] [height] [batches]
 ./build/bin/benchmark_unified_memory      [width] [height] [iterations]
+python benchmarks/benchmark_triton.py     # Triton vs CUDA: FA Gflops, scan Mtok/s, GEMV GB/s
 ```
 
 ## Python Usage
@@ -321,6 +336,46 @@ if kc.HAVE_NCCL:
     kc.nccl_allreduce(comms[0], partial)
 ```
 
+### Triton Kernels
+
+```python
+import sys
+sys.path.insert(0, "src")   # so 'import triton' resolves correctly before src/triton
+import triton                # third-party triton must be imported first
+from src.triton import flash_attention as fa_triton, selective_scan as ss_triton, int4_gemv
+
+import torch
+
+Q = torch.randn(1, 8, 1024, 64, device="cuda")
+K = torch.randn(1, 8, 1024, 64, device="cuda")
+V = torch.randn(1, 8, 1024, 64, device="cuda")
+out = fa_triton(Q, K, V, causal=True)   # [1, 8, 1024, 64], ~12.6 Tflops at N=1024
+
+# INT4 dequant + GEMV
+packed = torch.zeros(4096, 2048, dtype=torch.uint8, device="cuda")  # 2×INT4 per byte
+scales = torch.ones(4096, 32, device="cuda")   # group_size=128
+y = int4_gemv(packed, scales, group_size=128)
+```
+
+### OpenTelemetry Tracing
+
+```python
+from kernel_craft_otel import setup_tracing
+
+# Configure OTLP export to a local Jaeger / Grafana Tempo instance:
+setup_tracing(endpoint="http://localhost:4317", service_name="kernel-craft")
+
+# All subsequent kernel calls via KernelCraftOps now emit spans automatically.
+# Each span includes kernel.cuda_ms with true GPU elapsed time.
+from kernel_craft_torch_ops import KernelCraftOps
+import torch
+ops = KernelCraftOps()
+Q = torch.randn(1, 8, 512, 64, device="cuda")
+out = ops.flash_attention(Q, Q, Q, causal=True)  # emits span: flash_attention
+
+# Zero-overhead no-op mode: just don't call setup_tracing()
+```
+
 ### vLLM Backend
 
 ```python
@@ -403,6 +458,16 @@ Note: simulation bandwidth uses single-GPU device-copy; real NCCL all-reduce ove
 | Depthwise conv1d | D=2048, L=4096, d_conv=4 | ~0.303 ms, ~664 GB/s |
 | RMSNorm | 128 rows, D=4096 | ~0.025 ms, ~171 GB/s |
 
+### Triton Kernels (RTX 4070 Laptop, Triton 3.6.0, GPU-only timing)
+
+| Kernel | Config | Result |
+|--------|--------|--------|
+| Triton FlashAttention | B=1, H=8, N=1024, d=64 | ~0.170 ms, ~12.6 Tflops |
+| Triton FlashAttention | B=1, H=8, N=2048, d=64 | ~0.586 ms, ~14.7 Tflops |
+| Triton FlashAttention causal | B=1, H=8, N=1024, d=64 | ~0.127 ms |
+| Triton Selective Scan | B=1, D=512, N=16, L=4096 | ~3.44 ms, ~1.19 Mtok/s |
+| Triton INT4 GEMV | r=1024, c=4096, group=128 | ~0.089 ms, ~25.3 GB/s |
+
 ## Directory Structure
 
 ```
@@ -450,16 +515,26 @@ kernel-craft/
 │   │   ├── plugin_wrapper.cpp          # CNN TensorRT plugins
 │   │   ├── paged_attention_plugin.cpp  # PagedAttention TensorRT plugin
 │   │   └── vllm_plugin_wrapper.cpp     # TORCH_LIBRARY custom ops (C++ path)
+│   ├── triton/                          # Triton kernel implementations
+│   │   ├── __init__.py
+│   │   ├── flash_attention_triton.py
+│   │   ├── selective_scan_triton.py
+│   │   └── int4_gemv_triton.py
 │   └── python/
 │       ├── pybind_cuda.cpp             # Bindings: conv kernels
 │       ├── pybind_transformer.cpp      # Bindings: transformer kernels
-│       ├── kernel_craft_torch_ops.py   # ctypes bridge to libkernels.so
+│       ├── kernel_craft_torch_ops.py   # ctypes bridge to libkernels.so (OTEL-instrumented)
 │       ├── kernel_craft_vllm_backend.py
+│       ├── kernel_craft_otel.py        # OpenTelemetry setup + kernel_span()
 │       ├── pyproject.toml
 │       └── tests/
 │           ├── test_bindings.py
 │           ├── test_transformer_bindings.py
-│           └── test_vllm_backend.py
+│           ├── test_mamba_bindings.py
+│           ├── test_vllm_backend.py
+│           ├── test_triton_kernels.py
+│           ├── test_otel.py
+│           └── test_otel_e2e.py        # @pytest.mark.e2e (GPU + opt-125m)
 ├── benchmarks/
 │   ├── benchmark_conv.cpp
 │   ├── benchmark_flash_attention.cpp
@@ -467,6 +542,7 @@ kernel-craft/
 │   ├── benchmark_quant.cpp
 │   ├── benchmark_tensor_parallel.cpp
 │   ├── benchmark_selective_scan.cpp
+│   ├── benchmark_triton.py             # Triton vs CUDA side-by-side
 │   ├── benchmark_pipeline.cpp
 │   ├── benchmark_memory_pool.cpp
 │   ├── benchmark_cuda_graphs.cpp
@@ -500,3 +576,6 @@ kernel-craft/
 - FP8 E4M3 achieves ~5.8% mean relative error (3 mantissa bits); per-token scaling bounds per-row error tightly
 - Page size (16/32/64 tokens) has minimal impact on PagedAttention decode latency
 - The ctypes bridge reads `data_ptr()` directly from torch CUDA tensors — no GPU→CPU roundtrip
+- Triton FlashAttention reaches ~14.7 Tflops at N=2048 vs ~865 Gflops from the CUDA pybind path (which includes numpy transfer overhead)
+- Triton `BLOCK_N = next_power_of_2(N_state)` must be passed as a constexpr (not autotuned) for selective scan — autotuning would silently process only half the hidden state for odd N_state values
+- OpenTelemetry instrumentation is zero-overhead when `setup_tracing()` is not called — `kernel_span()` resolves to `contextlib.nullcontext` via a try/except import fallback

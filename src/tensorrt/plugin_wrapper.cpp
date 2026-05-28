@@ -310,6 +310,9 @@ extern "C" void __attribute__((constructor)) registerConvReluPlugin() {
 // ConvReluPluginCreator implementation
 // ---------------------------------------------------------------------------
 
+namespace kernel_craft {
+namespace tensorrt {
+
 ConvReluPluginCreator::ConvReluPluginCreator() : mNamespace("") {}
 
 const char* ConvReluPluginCreator::getPluginName() const noexcept {
@@ -348,3 +351,6 @@ void ConvReluPluginCreator::setPluginNamespace(const char* pluginNamespace) noex
 const char* ConvReluPluginCreator::getPluginNamespace() const noexcept {
     return mNamespace.c_str();
 }
+
+} // namespace tensorrt
+} // namespace kernel_craft

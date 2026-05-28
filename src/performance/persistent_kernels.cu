@@ -243,7 +243,7 @@ struct ConvWorkItem {
 
 static ConvWorkItem g_workQueue[MAX_BATCHES];
 static int g_workCount = 0;
-static bool g_workflowing = false;
+static bool g_workflowing __attribute__((unused)) = false;
 
 /**
  * \brief Enqueue a work item for batch execution.

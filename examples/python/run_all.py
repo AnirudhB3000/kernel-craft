@@ -5,11 +5,13 @@ run_all.py — run every Python example and report pass / skip / fail.
 Layout
 ------
     python/
-    ├── cnn/          conv_naive_numpy, conv_tiled_numpy, conv_naive_torch,
-    │                 conv_tiled_torch, memory_pool, mixed_precision
-    ├── transformer/  flash_attention, fp8_quant, speculative_decoding,
-    │                 tensor_parallel
-    └── vllm/         torch_ops, opt125m
+    ├── cnn/           conv_naive_numpy, conv_tiled_numpy, conv_naive_torch,
+    │                  conv_tiled_torch, memory_pool, mixed_precision
+    ├── transformer/   flash_attention, fp8_quant, speculative_decoding,
+    │                  tensor_parallel, mamba_ops
+    ├── triton/        triton_ops  (FlashAttention, selective scan, INT4 GEMV)
+    ├── observability/ otel_tracing  (OpenTelemetry kernel spans)
+    └── vllm/          torch_ops, opt125m
 
 Usage
 -----
@@ -48,6 +50,12 @@ EXAMPLES = [
     ("transformer/speculative_decoding","Draft token rejection sampling",           ["kernel_craft_transformer"]),
     ("transformer/tensor_parallel",     "Col/row parallel linear + collectives",    ["kernel_craft_transformer"]),
     ("transformer/mamba_ops",           "Selective scan, depthwise Conv1d, RMSNorm",["kernel_craft_transformer"]),
+    # ---- triton/ ------------------------------------------------------------
+    ("triton/triton_ops", "Triton FlashAttention, selective scan, INT4 GEMV",
+     ["triton", "torch"]),
+    # ---- observability/ -----------------------------------------------------
+    ("observability/otel_tracing", "OpenTelemetry kernel tracing demo",
+     ["kernel_craft_otel"]),
     # ---- vllm/ --------------------------------------------------------------
     ("vllm/torch_ops",  "torch.ops.kernel_craft namespace",          ["torch"]),
     ("vllm/opt125m",    "OPT-125M with kernel-craft vLLM backend",

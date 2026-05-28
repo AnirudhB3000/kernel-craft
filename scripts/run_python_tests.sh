@@ -29,11 +29,22 @@ case "${SUITE}" in
             "${TEST_DIR}/test_vllm_backend.py" \
             -v
         ;;
+    otel)
+        python -m pytest \
+            "${TEST_DIR}/test_otel.py" \
+            -v
+        ;;
+    e2e)
+        python -m pytest \
+            "${TEST_DIR}/test_otel_e2e.py" \
+            -v -m e2e
+        ;;
     all)
-        python -m pytest "${TEST_DIR}" -v
+        # Excludes e2e — those require a GPU and model download; run via make end_to_end
+        python -m pytest "${TEST_DIR}" --ignore="${TEST_DIR}/test_otel_e2e.py" -v
         ;;
     *)
-        echo "ERROR: unknown suite '${SUITE}'. Use: unit | integration | all" >&2
+        echo "ERROR: unknown suite '${SUITE}'. Use: unit | integration | otel | e2e | all" >&2
         exit 1
         ;;
 esac

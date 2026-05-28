@@ -69,6 +69,20 @@ endif()
 
 # TensorRT support (optional)
 if(DEFINED TENSORRT_ROOT)
+    # Auto-discover versioned subdirectory (e.g. TensorRT-10.x.y.z) when
+    # NvInfer.h is not at TENSORRT_ROOT/include directly.
+    if(NOT EXISTS "${TENSORRT_ROOT}/include/NvInfer.h")
+        file(GLOB _trt_candidates "${TENSORRT_ROOT}/TensorRT-*/include/NvInfer.h")
+        if(_trt_candidates)
+            list(GET _trt_candidates 0 _trt_header)
+            get_filename_component(_trt_inc "${_trt_header}" DIRECTORY)
+            get_filename_component(TENSORRT_ROOT "${_trt_inc}" DIRECTORY)
+        endif()
+        unset(_trt_candidates)
+        unset(_trt_header)
+        unset(_trt_inc)
+    endif()
+
     set(TensorRT_INCLUDE_DIR ${TENSORRT_ROOT}/include)
     set(TensorRT_LIBRARY_DIR ${TENSORRT_ROOT}/lib)
     if(EXISTS ${TensorRT_INCLUDE_DIR}/NvInfer.h)
@@ -78,13 +92,18 @@ if(DEFINED TENSORRT_ROOT)
         add_compile_definitions(HAVE_TENSORRT)
         set(HAVE_TENSORRT TRUE)
     else()
-        message(WARNING "TensorRT headers not found at ${TensorRT_INCLUDE_DIR}")
+        message(STATUS "TensorRT headers not found at ${TensorRT_INCLUDE_DIR} — TensorRT targets disabled")
     endif()
 endif()
 
 # ------------------------------------------------------------
 # pybind11 Python bindings (auto-downloaded via FetchContent)
 # ------------------------------------------------------------
+# Use FindPython3 (CMake ≥ 3.12) instead of the removed FindPythonInterp /
+# FindPythonLibs modules, which silences the CMP0148 policy warning from
+# pybind11's legacy FindPythonLibsNew.cmake.
+set(PYBIND11_FINDPYTHON ON)
+
 include(FetchContent)
 FetchContent_Declare(pybind11
     GIT_REPOSITORY https://github.com/pybind/pybind11.git
@@ -123,6 +142,9 @@ if(HAVE_TENSORRT)
     target_include_directories(kernel_craft_tensorrt PRIVATE ${TensorRT_INCLUDE_DIR})
     target_link_libraries(kernel_craft_tensorrt PRIVATE ${TensorRT_LIBRARY_DIR}/libnvinfer.so CUDA::cudart)
     target_compile_definitions(kernel_craft_tensorrt PRIVATE HAVE_TENSORRT)
+    # TRT 10 deprecated IPluginV2/IPluginV2DynamicExt in favour of IPluginV3.
+    # We keep the V2 API intentionally (upgrading is out of scope); suppress noise.
+    target_compile_options(kernel_craft_tensorrt PRIVATE -Wno-deprecated-declarations)
     message(STATUS "TensorRT plugin library target created")
 endif()
 
@@ -251,6 +273,7 @@ if(HAVE_TENSORRT)
     target_include_directories(test_tensorrt_plugin PRIVATE ${TENSORRT_INCLUDE_DIR})
     target_link_libraries(test_tensorrt_plugin PRIVATE ${TENSORRT_ROOT}/lib/libnvinfer.so CUDA::cudart)
     target_compile_definitions(test_tensorrt_plugin PRIVATE HAVE_TENSORRT)
+    target_compile_options(test_tensorrt_plugin PRIVATE -Wno-deprecated-declarations)
 endif()
 
 # Benchmark executable for convolution
@@ -473,7 +496,8 @@ add_custom_target(run_python_tests
     COMMENT "Running all Python tests"
 )
 
-# Full release gate: C++ unit → Python unit → C++ integration → Python integration → benchmarks
+# Full release gate: C++ unit → Python unit → C++ integration → Python integration → benchmarks → OTEL unit → e2e
+# Source of truth for full codebase correctness. Requires a CUDA-capable GPU.
 add_custom_target(run_tests
     COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/run_all_tests.sh" "${CMAKE_BINARY_DIR}" "${CMAKE_SOURCE_DIR}"
     DEPENDS
@@ -495,7 +519,15 @@ add_custom_target(run_tests
         benchmark_async_streams benchmark_unified_memory benchmark_multi_stream_pipeline
         benchmark_flash_attention benchmark_paged_attention benchmark_quant
         benchmark_tensor_parallel benchmark_selective_scan
-    COMMENT "Release gate: unit → python unit → integration → python integration → benchmarks"
+    COMMENT "Release gate: C++ unit → Python unit → C++ integration → Python integration → benchmarks → OTEL unit"
+)
+
+# E2E test suite: real GPU kernel calls (flash_attention + paged_attention) with OTEL span validation.
+# Requires: GPU, vLLM/torch installed. No model download needed.
+# Also included in make run_tests (suite 7/7). Use this target to run e2e in isolation.
+add_custom_target(end_to_end
+    COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/run_python_tests.sh" "${CMAKE_SOURCE_DIR}" e2e
+    COMMENT "Running e2e OTEL tests (requires GPU + facebook/opt-125m)"
 )
 
 # ---------------------------------------------------------------------------

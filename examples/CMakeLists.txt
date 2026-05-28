@@ -79,6 +79,7 @@ if(HAVE_TENSORRT)
         CUDA::cudart
     )
     target_compile_definitions(plugin_cnn PRIVATE HAVE_TENSORRT)
+    target_compile_options(plugin_cnn PRIVATE -Wno-deprecated-declarations)
     set_target_properties(plugin_cnn PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )

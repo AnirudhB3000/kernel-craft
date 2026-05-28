@@ -8,9 +8,10 @@ Python interface for kernel-craft: pybind11 extension module, ctypes bridge to `
 |------|-------------|
 | `pybind_cuda.cpp` | pybind11 bindings for CNN kernels: conv, INT8, BN folding, fused ops |
 | `pybind_transformer.cpp` | pybind11 bindings for transformer kernels: flash attention, paged attention, INT4/FP8 quant, speculative decoding |
-| `kernel_craft_torch_ops.py` | ctypes bridge — calls `libkernels.so` launchers directly from Python via `data_ptr()`, no GPU→CPU roundtrip |
-| `kernel_craft_vllm_backend.py` | `KernelCraftAttentionBackend` implementing the vLLM 0.21.0 v1 API (`vllm.v1.attention.backend`) |
-| `pyproject.toml` | Package metadata; setuptools build backend |
+| `kernel_craft_torch_ops.py` | ctypes bridge — calls `libkernels.so` launchers directly from Python via `data_ptr()`, no GPU→CPU roundtrip; all 5 kernel methods emit OpenTelemetry spans |
+| `kernel_craft_vllm_backend.py` | `KernelCraftAttentionBackend` implementing the vLLM 0.21.0 v1 API (`vllm.v1.attention.backend`); emits request-level OTEL spans for prefill/decode |
+| `kernel_craft_otel.py` | Central OTEL module: `setup_tracing()`, `kernel_span()` context manager with CUDA event timing, no-op fallbacks when `opentelemetry` is not installed |
+| `pyproject.toml` | Package metadata; setuptools build backend; optional dep groups: `vllm`, `triton`, `observability` |
 | `tests/` | pytest test suite (see `tests/README.md`) |
 
 ## Installation
@@ -42,6 +43,18 @@ source venv/bin/activate
 pip install torch==2.11.0 --extra-index-url https://download.pytorch.org/whl/cu130
 pip install vllm==0.21.0
 pip install -e .
+```
+
+### Triton kernels (optional)
+
+```bash
+pip install -e ".[triton]"   # installs triton>=3.0
+```
+
+### OpenTelemetry observability (optional)
+
+```bash
+pip install -e ".[observability]"   # installs opentelemetry-api/sdk + OTLP exporter
 ```
 
 ## Usage
@@ -172,6 +185,36 @@ import torch
 ops = KernelCraftOps()   # loads libkernels.so from CMake build dir
 Q = torch.randn(1, 8, 512, 64, device='cuda')
 out = ops.flash_attention(Q, K, V, causal=True)
+```
+
+### Triton kernels
+
+```python
+# Import third-party triton before adding src/ to sys.path to avoid shadowing
+import triton
+import sys; sys.path.insert(0, "src")
+from triton import flash_attention, selective_scan, int4_gemv
+
+import torch
+Q = torch.randn(1, 8, 1024, 64, device='cuda')
+out = flash_attention(Q, Q, Q, causal=True)   # [1, 8, 1024, 64]
+```
+
+### OpenTelemetry observability
+
+```python
+from kernel_craft_otel import setup_tracing
+
+# Export to Jaeger (or any OTLP-compatible backend):
+setup_tracing(endpoint="http://localhost:4317", service_name="kernel-craft")
+
+# For testing with in-memory span capture (no external collector):
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+exporter = InMemorySpanExporter()
+setup_tracing(exporter=exporter)   # SimpleSpanProcessor used when exporter is provided
+
+# All KernelCraftOps calls now emit spans automatically.
+# Zero-overhead no-op mode: just don't call setup_tracing().
 ```
 
 ## API Reference — CNN Kernels

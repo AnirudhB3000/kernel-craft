@@ -162,7 +162,6 @@ extern "C" void launch_conv_grouped_opt(const float* input,
                                          int inChannels, int outChannels,
                                          int groups, int ksize,
                                          dim3 block = dim3(16,16,1)) {
-    int channelsPerGroup = outChannels / groups;
     dim3 grid((width + block.x - 1) / block.x,
               (height + block.y - 1) / block.y,
               (outChannels + block.z - 1) / block.z);

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kernel-craft"
-version = "1.0.3"
+version = "1.1.0"
 description = "CUDA kernels for ML training and inference"
 readme = "README.md"
 requires-python = ">=3.11, <3.13"
@@ -38,6 +38,16 @@ torch = [
 triton = [
     "triton>=2.1",
     "torch>=2.1",
+]
+observability = [
+    "opentelemetry-api>=1.20",
+    "opentelemetry-sdk>=1.20",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.20",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "e2e: end-to-end tests requiring a GPU and model download",
 ]
 
 [project.urls]

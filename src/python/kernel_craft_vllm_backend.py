@@ -66,6 +66,18 @@ try:
 except Exception:
     HAS_OPS = False
 
+try:
+    from kernel_craft_otel import kernel_span, _get_tracer
+except ImportError:
+    from contextlib import nullcontext as kernel_span
+    def _get_tracer():
+        import contextlib
+        class _NoOp:
+            @contextlib.contextmanager
+            def start_as_current_span(self, name, **kw):
+                yield None
+        return _NoOp()
+
 _BACKEND_NAME = "kernel_craft"
 
 
@@ -233,11 +245,19 @@ if HAS_VLLM:
 
             H, d = self.num_heads, self.head_size
             is_decode = (attn_metadata.max_query_len == 1)
+            B = attn_metadata.seq_lens.shape[0]
 
-            if is_decode:
-                self._decode_forward(query, kv_cache, attn_metadata, output)
-            else:
-                self._prefill_forward(query, key, value, attn_metadata, output)
+            with _get_tracer().start_as_current_span("vllm.forward") as span:
+                if span is not None:
+                    try:
+                        span.set_attribute("is_decode", is_decode)
+                        span.set_attribute("batch", B)
+                    except Exception:
+                        pass
+                if is_decode:
+                    self._decode_forward(query, kv_cache, attn_metadata, output)
+                else:
+                    self._prefill_forward(query, key, value, attn_metadata, output)
 
             return output
 
@@ -265,12 +285,14 @@ if HAS_VLLM:
             sl     = meta.seq_lens[:B].to(torch.int32).contiguous()
 
             block_size = K_pool.shape[1]
+            max_seq_len = int(sl.max().item()) if B > 0 else 0
 
-            O = _paged_attn(
-                q, bt, K_pool, V_pool, sl,
-                H_kv=self.num_kv_heads,
-                block_size=block_size,
-            )  # [B, H, d]
+            with kernel_span("decode", batch=B, max_seq_len=max_seq_len):
+                O = _paged_attn(
+                    q, bt, K_pool, V_pool, sl,
+                    H_kv=self.num_kv_heads,
+                    block_size=block_size,
+                )  # [B, H, d]
 
             output[:B] = O.to(output.dtype).view(B, H * d)
 
@@ -293,26 +315,26 @@ if HAS_VLLM:
             qsl = meta.query_start_loc  # [B+1]
             B   = qsl.shape[0] - 1
 
-            offset = 0
             for i in range(B):
                 q_start = int(qsl[i].item())
                 q_end   = int(qsl[i + 1].item())
                 qlen    = q_end - q_start
 
-                # Slice this request's tokens
-                qi = query[q_start:q_end].float()  # [qlen, H, d]
-                ki = key  [q_start:q_end].float()  # [qlen, H_kv, d]
-                vi = value[q_start:q_end].float()
+                with kernel_span("prefill", seq_len=qlen):
+                    # Slice this request's tokens
+                    qi = query[q_start:q_end].float()  # [qlen, H, d]
+                    ki = key  [q_start:q_end].float()  # [qlen, H_kv, d]
+                    vi = value[q_start:q_end].float()
 
-                # Reshape to [1, H, qlen, d] for our kernel
-                qi = qi.permute(1, 0, 2).unsqueeze(0)  # [1, H, qlen, d]
-                ki = ki.permute(1, 0, 2).unsqueeze(0)  # [1, H_kv, qlen, d]
-                vi = vi.permute(1, 0, 2).unsqueeze(0)
+                    # Reshape to [1, H, qlen, d] for our kernel
+                    qi = qi.permute(1, 0, 2).unsqueeze(0)  # [1, H, qlen, d]
+                    ki = ki.permute(1, 0, 2).unsqueeze(0)  # [1, H_kv, qlen, d]
+                    vi = vi.permute(1, 0, 2).unsqueeze(0)
 
-                Oi = _flash_attn(qi, ki, vi, H_kv=H_kv, causal=meta.causal)
-                # Oi: [1, H, qlen, d] → [qlen, H * d]
-                Oi = Oi.squeeze(0).permute(1, 0, 2).reshape(qlen, H * d)
-                output[q_start:q_end] = Oi.to(output.dtype)
+                    Oi = _flash_attn(qi, ki, vi, H_kv=H_kv, causal=meta.causal)
+                    # Oi: [1, H, qlen, d] → [qlen, H * d]
+                    Oi = Oi.squeeze(0).permute(1, 0, 2).reshape(qlen, H * d)
+                    output[q_start:q_end] = Oi.to(output.dtype)
 
 
 # ---------------------------------------------------------------------------

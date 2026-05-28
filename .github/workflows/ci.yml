@@ -68,6 +68,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cuda-cache-
 
+      - name: Cache HuggingFace model (opt-125m)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-opt-125m-v1
+          restore-keys: |
+            hf-opt-125m-
+
       - name: Install build dependencies (if missing)
         run: |
           which cmake || { apt-get update && apt-get install -y cmake make python3 python3-pip python3-venv git; }
@@ -105,3 +113,23 @@ jobs:
       - name: Run Python integration tests
         working-directory: src/python
         run: /tmp/cicvenv/bin/python -m pytest tests/test_vllm_backend.py -v
+
+      - name: Run Python OTEL unit tests
+        working-directory: src/python
+        run: |
+          /tmp/cicvenv/bin/pip install "opentelemetry-api>=1.20" "opentelemetry-sdk>=1.20"
+          /tmp/cicvenv/bin/python -m pytest tests/test_otel.py -v
+
+      - name: Download model for e2e tests
+        run: |
+          MODEL_DIR="${HOME}/.cache/huggingface/hub/models--facebook--opt-125m"
+          if [ ! -d "$MODEL_DIR" ]; then
+            /tmp/cicvenv/bin/pip install huggingface_hub
+            /tmp/cicvenv/bin/huggingface-cli download facebook/opt-125m
+          fi
+
+      - name: Run e2e tests
+        working-directory: src/python
+        env:
+          HF_HUB_OFFLINE: "1"
+        run: /tmp/cicvenv/bin/python -m pytest tests/test_otel_e2e.py -v -m e2e

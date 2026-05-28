@@ -737,6 +737,47 @@ CUDA events for timing; Nsight Systems / Nsight Compute for profiling.
 
 ---
 
+## Phase 16: OpenTelemetry Inference Observability ✅ COMPLETE
+
+### Design Decisions
+
+#### Instrumentation architecture (pure Python, no CUDA kernel changes)
+- Two-level instrumentation: kernel-level (per-kernel spans in `kernel_craft_torch_ops.py`) and request-level (vLLM forward/prefill/decode spans in `kernel_craft_vllm_backend.py`)
+- Central OTEL module `kernel_craft_otel.py` owns all OTEL imports; importing modules get `kernel_span` via a `try/except ImportError` fallback to `contextlib.nullcontext` — zero overhead and zero errors when OTEL is not installed
+
+#### SpanProcessor choice: SimpleSpanProcessor vs BatchSpanProcessor
+- Production (default OTLP exporter): `BatchSpanProcessor` — async, groups spans into batches to reduce network overhead
+- Test / custom exporter path: `SimpleSpanProcessor` — synchronous, so `InMemorySpanExporter.get_finished_spans()` sees spans immediately after the `with kernel_span(...)` block exits
+- `setup_tracing(exporter=None)` → OTLP + Batch; `setup_tracing(exporter=my_exporter)` → Simple; this keeps tests self-contained without external collectors
+
+#### Global OTEL TracerProvider isolation
+- The OTEL global `trace.set_tracer_provider()` can only be called once per process — subsequent calls log a warning and are silently ignored
+- Tests reset only `kernel_craft_otel._tracer` and `kernel_craft_otel._provider` singletons (not the global) via the `_reset_otel_state` autouse fixture; each test installs a fresh `TracerProvider` with a fresh `InMemorySpanExporter`, creating spans through that provider's tracer directly
+- Span context propagation (parent-child) works via Python `contextvars.ContextVar`, not the global provider, so nested `kernel_span()` inside a `tracer.start_as_current_span()` correctly records parent-child relationships
+
+#### CUDA timing
+- `kernel.cuda_ms` attribute uses `torch.cuda.Event(enable_timing=True)` pairs: start event recorded before the ctypes call, stop event recorded and `synchronize()` called after
+- Falls back silently when CUDA is unavailable (CPU-only environments, CI without GPU)
+
+#### Graceful degradation
+- `_HAS_OTEL_API` flag guards all `opentelemetry` imports; `_NoOpTracer` / `_NoOpSpan` substitute when not installed
+- `setup_tracing()` is idempotent: `_provider is not None` guard prevents duplicate processor installation
+
+### Test Results
+- 7 OTEL unit tests: all pass
+- 104 total Python tests (all suites): all pass, 0 regressions
+
+### Deliverables
+* `src/python/kernel_craft_otel.py` — `setup_tracing()`, `kernel_span()`, `_get_tracer()`, no-op fallbacks
+* `src/python/tests/test_otel.py` — 7 unit tests (InMemorySpanExporter; no external collector)
+* `src/python/tests/test_otel_e2e.py` — E2E test (`@pytest.mark.e2e`): opt-125m via vLLM, span hierarchy + cuda_ms + no-ERROR assertions
+* `src/python/kernel_craft_torch_ops.py` — 5 kernel methods wrapped with `kernel_span()` (flash_attention, paged_attention, int4_gemv, fp8_quantize, speculative_verify)
+* `src/python/kernel_craft_vllm_backend.py` — request-level spans: `vllm.forward` (parent), `prefill` / `decode` (children of forward, parents of kernel spans)
+* `src/python/pyproject.toml` — `observability` optional dep group; `[tool.pytest.ini_options] markers = ["e2e: ..."]`
+* `.github/workflows/ci.yml` — HF model cache step + OTEL unit test step + e2e test step added to `kernel-equipped`
+
+---
+
 # 6. Success Criteria
 
 You should be able to:
