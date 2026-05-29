@@ -35,7 +35,7 @@ def _reset_otel_state():
 
 
 def _make_exporter():
-    """Return (InMemorySpanExporter, setup_tracing) or skip if OTEL SDK absent."""
+    """Return InMemorySpanExporter or skip if OTEL SDK absent."""
     try:
         from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
             InMemorySpanExporter,
@@ -43,6 +43,14 @@ def _make_exporter():
     except ImportError:
         pytest.skip("opentelemetry-sdk not installed")
     return InMemorySpanExporter()
+
+
+def _cuda_available() -> bool:
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except ImportError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -94,10 +102,7 @@ def test_kernel_span_records_attributes():
     assert span.attributes.get("seq_len") == 512
 
 
-@pytest.mark.skipif(
-    not pytest.importorskip("torch", reason="torch not installed").cuda.is_available(),
-    reason="CUDA device required for GPU timing test",
-)
+@pytest.mark.skipif(not _cuda_available(), reason="CUDA device required for GPU timing test")
 def test_kernel_span_cuda_ms_present():
     """kernel.cuda_ms attribute is set and positive when a real CUDA op runs inside the span."""
     import torch
